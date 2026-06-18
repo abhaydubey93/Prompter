@@ -1,0 +1,336 @@
+//! SQLite persistence for PromptOpt.
+//!
+//! Schema follows `design_docs/04_Database_Design.md` (prompts, context_profiles,
+//! app_profiles, history) plus a `settings` key/value table for app config.
+//! Location: `<app_data_dir>/PromptOpt/data.db`.
+
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use rusqlite::{params, Connection};
+use serde_json::json;
+
+use crate::types::{
+    ContextProfile, HistoryEntry, Prompt, Settings,
+};
+
+pub struct DbService {
+    conn: Mutex<Connection>,
+}
+
+impl DbService {
+    /// Open (or create) the database at the given path and run migrations.
+    pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        if let Some(parent) = path.as_ref().parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let conn = Connection::open(path.as_ref())?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        Self::migrate(&conn)?;
+        Ok(Self { conn: Mutex::new(conn) })
+    }
+
+    /// Default path: <data_dir>/PromptOpt/data.db
+    pub fn default_path() -> anyhow::Result<PathBuf> {
+        let base = dirs::data_dir()
+            .ok_or_else(|| anyhow::anyhow!("no data dir"))?;
+        Ok(base.join("PromptOpt").join("data.db"))
+    }
+
+    fn migrate(conn: &Connection) -> anyhow::Result<()> {
+        // DDL from design_docs/04_Database_Design.md §3 (+ settings table).
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS prompts (
+                id          TEXT PRIMARY KEY,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                framework   TEXT,
+                model_used  TEXT,
+                score       INTEGER DEFAULT 0,
+                usage_count INTEGER DEFAULT 0,
+                source_app  TEXT,
+                context_id  TEXT REFERENCES context_profiles(id),
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                is_deleted  INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_prompts_framework ON prompts(framework);
+            CREATE INDEX IF NOT EXISTS idx_prompts_score ON prompts(score DESC);
+
+            CREATE TABLE IF NOT EXISTS context_profiles (
+                id            TEXT PRIMARY KEY,
+                name          TEXT NOT NULL,
+                role          TEXT,
+                audience      TEXT,
+                tone          TEXT,
+                style_snippet TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS app_profiles (
+                app_name             TEXT PRIMARY KEY,
+                default_framework    TEXT,
+                default_model        TEXT,
+                replacement_strategy TEXT CHECK(replacement_strategy IN ('Accessibility','Clipboard','SyntheticKeys'))
+            );
+
+            CREATE TABLE IF NOT EXISTS history (
+                id                TEXT PRIMARY KEY,
+                raw_prompt        TEXT NOT NULL,
+                optimized_prompt  TEXT NOT NULL,
+                model             TEXT NOT NULL,
+                score             INTEGER,
+                timestamp         TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            "#,
+        )?;
+        Self::seed_defaults(conn)?;
+        Ok(())
+    }
+
+    fn seed_defaults(conn: &Connection) -> anyhow::Result<()> {
+        let defaults = Settings::default();
+        let pairs: [(&str, String); 5] = [
+            ("hotkey", defaults.hotkey.clone()),
+            ("theme", defaults.theme.clone()),
+            ("default_framework", defaults.default_framework.clone()),
+            ("default_model", defaults.default_model.clone()),
+            ("ollama_url", defaults.ollama_url.clone()),
+        ];
+        for (k, v) in pairs {
+            conn.execute(
+                "INSERT OR IGNORE INTO settings(key, value) VALUES (?1, ?2)",
+                params![k, v],
+            )?;
+        }
+        Ok(())
+    }
+
+    // ---- settings ---------------------------------------------------------
+
+    pub fn get_settings(&self) -> anyhow::Result<Settings> {
+        let conn = self.conn.lock().unwrap();
+        let read = |key: &str| -> String {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key=?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .unwrap_or_default()
+        };
+        Ok(Settings {
+            hotkey: read("hotkey"),
+            theme: read("theme"),
+            default_framework: read("default_framework"),
+            default_model: read("default_model"),
+            ollama_url: read("ollama_url"),
+        })
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    // ---- prompts ----------------------------------------------------------
+
+    pub fn save_prompt(&self, p: &Prompt) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            r#"INSERT INTO prompts(id, title, body, framework, model_used, score, usage_count, source_app)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+               ON CONFLICT(id) DO UPDATE SET
+                 title=excluded.title, body=excluded.body, framework=excluded.framework,
+                 model_used=excluded.model_used, score=excluded.score,
+                 usage_count=excluded.usage_count, source_app=excluded.source_app"#,
+            params![
+                p.id, p.title, p.body, p.framework, p.model_used,
+                p.score, p.usage_count, p.source_app,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_prompts(&self) -> anyhow::Result<Vec<Prompt>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, body, framework, model_used, score, usage_count, source_app, created_at
+             FROM prompts WHERE is_deleted = 0
+             ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Prompt {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                body: r.get(2)?,
+                framework: r.get(3)?,
+                model_used: r.get(4)?,
+                score: r.get(5)?,
+                usage_count: r.get(6)?,
+                source_app: r.get(7)?,
+                created_at: r.get(8)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn search_prompts(&self, query: &str) -> anyhow::Result<Vec<Prompt>> {
+        let conn = self.conn.lock().unwrap();
+        let like = format!("%{}%", query);
+        let mut stmt = conn.prepare(
+            "SELECT id, title, body, framework, model_used, score, usage_count, source_app, created_at
+             FROM prompts
+             WHERE is_deleted = 0 AND (title LIKE ?1 OR body LIKE ?1)
+             ORDER BY score DESC, created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![like], |r| {
+            Ok(Prompt {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                body: r.get(2)?,
+                framework: r.get(3)?,
+                model_used: r.get(4)?,
+                score: r.get(5)?,
+                usage_count: r.get(6)?,
+                source_app: r.get(7)?,
+                created_at: r.get(8)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn delete_prompt(&self, id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE prompts SET is_deleted=1 WHERE id=?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn increment_usage(&self, id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE prompts SET usage_count = usage_count + 1 WHERE id=?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    // ---- context profiles -------------------------------------------------
+
+    pub fn save_context(&self, c: &ContextProfile) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            r#"INSERT INTO context_profiles(id, name, role, audience, tone, style_snippet)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+               ON CONFLICT(id) DO UPDATE SET
+                 name=excluded.name, role=excluded.role, audience=excluded.audience,
+                 tone=excluded.tone, style_snippet=excluded.style_snippet"#,
+            params![c.id, c.name, c.role, c.audience, c.tone, c.style_snippet],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_contexts(&self) -> anyhow::Result<Vec<ContextProfile>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, audience, tone, style_snippet FROM context_profiles",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ContextProfile {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                role: r.get(2)?,
+                audience: r.get(3)?,
+                tone: r.get(4)?,
+                style_snippet: r.get(5)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_context(&self, id: &str) -> anyhow::Result<Option<ContextProfile>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, audience, tone, style_snippet FROM context_profiles WHERE id=?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(r) = rows.next()? {
+            Ok(Some(ContextProfile {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                role: r.get(2)?,
+                audience: r.get(3)?,
+                tone: r.get(4)?,
+                style_snippet: r.get(5)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // ---- history ----------------------------------------------------------
+
+    pub fn add_history(
+        &self,
+        raw: &str,
+        optimized: &str,
+        model: &str,
+        score: Option<i64>,
+    ) -> anyhow::Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO history(id, raw_prompt, optimized_prompt, model, score)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, raw, optimized, model, score],
+        )?;
+        Ok(id)
+    }
+
+    pub fn list_history(&self, limit: i64) -> anyhow::Result<Vec<HistoryEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, raw_prompt, optimized_prompt, model, score, timestamp
+             FROM history ORDER BY timestamp DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |r| {
+            Ok(HistoryEntry {
+                id: r.get(0)?,
+                raw_prompt: r.get(1)?,
+                optimized_prompt: r.get(2)?,
+                model: r.get(3)?,
+                score: r.get(4)?,
+                timestamp: r.get(5)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Diagnostic helper — return row counts per table as a JSON string.
+    pub fn stats(&self) -> serde_json::Value {
+        let conn = self.conn.lock().unwrap();
+        let count = |table: &str| -> i64 {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap_or(0)
+        };
+        json!({
+            "prompts": count("prompts"),
+            "context_profiles": count("context_profiles"),
+            "app_profiles": count("app_profiles"),
+            "history": count("history"),
+        })
+    }
+}

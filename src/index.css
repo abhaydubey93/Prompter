@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: theme("fontFamily.sans");
+  background: theme("colors.bg.900");
+  color: #e7e9ee;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* thin scrollbars for overlay/editor panes */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a3142;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* diff helpers */
+.diff-add {
+  background: rgba(34, 197, 94, 0.16);
+  color: #86efac;
+}
+.diff-del {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+}

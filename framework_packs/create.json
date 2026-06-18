@@ -1,0 +1,6 @@
+{
+  "id": "CREATE",
+  "name": "CREATE",
+  "variables": ["context", "role", "task", "explanation", "constraints", "tone", "extras"],
+  "template": "You are an expert prompt engineer. Rewrite the user's raw prompt using the CREATE framework: Context, Request, Explanation, Action, Tone, Extras.\n\nReturn ONLY the rewritten prompt, no preamble, no commentary.\n\nRaw prompt to optimize:\n\"\"\"\n{{ raw_prompt }}\n\"\"\"\n{% if context %}Persistent context: {{ context }}\n{% endif %}{% if tone %}Desired tone: {{ tone }}\n{% endif %}{% if audience %}Target audience: {{ audience }}\n{% endif %}Make the rewritten prompt specific, structured with sections, and include concrete constraints and success criteria."
+}

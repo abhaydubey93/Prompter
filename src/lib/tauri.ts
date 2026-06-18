@@ -1,0 +1,63 @@
+/** Thin Tauri invoke wrapper + event listeners used by both overlay and main windows. */
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+// ─── Types (mirrors Rust types.rs) ──────────────────────────────────────
+
+export interface Position { x: number; y: number }
+export interface CaptureResult { text: string; position: Position }
+export interface OptimizeRequest { raw: string; framework: string; model: string; context_id?: string }
+export interface OptimizeResult { optimized: string; score: number; diff: string; tokens: number; session_id: string }
+export interface ReplaceResult { success: boolean; fallback: boolean }
+export interface ModelInfo { id: string; name: string }
+export interface Prompt { id: string; title: string; body: string; framework?: string; model_used?: string; score: number; usage_count: number; source_app?: string; created_at: string }
+export interface ContextProfile { id: string; name: string; role?: string; audience?: string; tone?: string; style_snippet?: string }
+export interface HistoryEntry { id: string; raw_prompt: string; optimized_prompt: string; model: string; score?: number; timestamp: string }
+export interface Settings { hotkey: string; theme: string; default_framework: string; default_model: string; ollama_url: string }
+export interface FrameworkInfo { id: string; name: string }
+
+// ─── Commands ─────────────────────────────────────────────────────────────
+
+export const cmd = {
+  captureText: () => invoke<CaptureResult>("capture_text", {}),
+  optimizePrompt: (req: OptimizeRequest) => invoke<OptimizeResult>("optimize_prompt", { raw: req.raw, framework: req.framework, model: req.model, context_id: req.context_id }),
+  acceptReplacement: (text: string) => invoke<ReplaceResult>("accept_replacement", { text }),
+  getModels: (provider: string) => invoke<ModelInfo[]>("get_models", { provider }),
+  savePrompt: (p: Prompt) => invoke<string>("save_prompt", { prompt: p }),
+  listPrompts: () => invoke<Prompt[]>("list_prompts", {}),
+  searchPrompts: (q: string) => invoke<Prompt[]>("search_prompts", { query: q }),
+  deletePrompt: (id: string) => invoke<void>("delete_prompt", { id }),
+  saveContext: (c: ContextProfile) => invoke<void>("save_context", { profile: c }),
+  listContexts: () => invoke<ContextProfile[]>("list_contexts", {}),
+  listHistory: (limit?: number) => invoke<HistoryEntry[]>("list_history", { limit }),
+  getSettings: () => invoke<Settings>("get_settings", {}),
+  setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
+  listFrameworks: () => invoke<FrameworkInfo[]>("list_frameworks", {}),
+  showOverlay: (pos: Position) => invoke<void>("show_overlay", { pos }),
+  hideOverlay: () => invoke<void>("hide_overlay", {}),
+  dbStats: () => invoke<Record<string, number>>("db_stats", {}),
+};
+
+// ─── Event helpers ───────────────────────────────────────────────────────
+
+export type OptChunkEvent = { text: string; session_id: string };
+export type OptDoneEvent = OptimizeResult;
+export type OptErrorEvent = { code: string; message: string; session_id: string };
+
+export function onOptChunk(
+  cb: (e: OptChunkEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<OptChunkEvent>("opt_chunk", (evt) => cb(evt.payload));
+}
+
+export function onOptDone(
+  cb: (e: OptDoneEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<OptDoneEvent>("opt_done", (evt) => cb(evt.payload));
+}
+
+export function onOptError(
+  cb: (e: OptErrorEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<OptErrorEvent>("opt_error", (evt) => cb(evt.payload));
+}
