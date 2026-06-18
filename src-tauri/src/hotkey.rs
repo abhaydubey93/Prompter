@@ -16,6 +16,16 @@ pub fn register(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
         if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
             let app = _app.clone();
 
+            // Remember the currently-focused window so we can restore it on Esc.
+            if let Some(prior) = app.try_state::<overlay::PriorFocus>() {
+                // Find whichever window (besides overlay) is currently focused.
+                let focused_label = app.webview_windows().iter()
+                    .find(|(_, w)| w.is_focused().unwrap_or(false)
+                        && w.label() != "overlay")
+                    .map(|(label, _)| label.clone());
+                *prior.0.lock().unwrap() = focused_label;
+            }
+
             // Capture text + caret position from accessibility layer.
             let access = app.state::<crate::accessibility::AccessibilityService>();
             let text = access.get_active_element_text().unwrap_or_default();
@@ -30,7 +40,6 @@ pub fn register(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
             // Emit overlay_show event so the overlay React component receives raw text.
             let _ = app.emit("overlay_show", serde_json::json!({
                 "text": text,
-                "position": { "x": pos.x, "y": pos.y },
             }));
         }
     })?;

@@ -334,3 +334,108 @@ impl DbService {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_db() -> DbService {
+        let path = std::env::temp_dir().join(format!(
+            "promptopt_test_{}_{}.db",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unknown").replace("::", "_"),
+        ));
+        let _ = std::fs::remove_file(&path);
+        DbService::open(&path).unwrap()
+    }
+
+    #[test]
+    fn test_settings_roundtrip() {
+        let db = tmp_db();
+        let s = db.get_settings().unwrap();
+        assert_eq!(s.hotkey, "Ctrl+Shift+E");
+        assert_eq!(s.theme, "dark");
+        assert_eq!(s.default_framework, "CREATE");
+        assert_eq!(s.default_model, "ollama:llama3");
+        assert_eq!(s.ollama_url, "http://localhost:11434");
+
+        db.set_setting("hotkey", "Ctrl+Alt+P").unwrap();
+        let s2 = db.get_settings().unwrap();
+        assert_eq!(s2.hotkey, "Ctrl+Alt+P");
+    }
+
+    #[test]
+    fn test_prompt_crud() {
+        let db = tmp_db();
+        assert_eq!(db.list_prompts().unwrap().len(), 0);
+
+        let p = Prompt {
+            id: "p1".into(),
+            title: "Test Prompt".into(),
+            body: "Write a poem about Rust".into(),
+            framework: Some("CREATE".into()),
+            model_used: Some("ollama:llama3".into()),
+            score: 42,
+            usage_count: 0,
+            source_app: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+        db.save_prompt(&p).unwrap();
+        let list = db.list_prompts().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].title, "Test Prompt");
+
+        // Search.
+        let found = db.search_prompts("poem").unwrap();
+        assert_eq!(found.len(), 1);
+
+        // Soft delete.
+        db.delete_prompt("p1").unwrap();
+        assert_eq!(db.list_prompts().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_history_insert_and_list() {
+        let db = tmp_db();
+        assert_eq!(db.list_history(10).unwrap().len(), 0);
+
+        db.add_history("raw", "optimized", "ollama:llama3", Some(75)).unwrap();
+        db.add_history("raw2", "optimized2", "ollama:llama3", Some(80)).unwrap();
+
+        let list = db.list_history(10).unwrap();
+        assert_eq!(list.len(), 2);
+        // Both entries present.
+        let scores: Vec<Option<i64>> = list.iter().map(|h| h.score).collect();
+        assert!(scores.contains(&Some(75)));
+        assert!(scores.contains(&Some(80)));
+    }
+
+    #[test]
+    fn test_context_crud() {
+        let db = tmp_db();
+        let c = ContextProfile {
+            id: "ctx1".into(),
+            name: "Dev Role".into(),
+            role: Some("Senior Engineer".into()),
+            audience: Some("Junior Devs".into()),
+            tone: Some("concise".into()),
+            style_snippet: None,
+        };
+        db.save_context(&c).unwrap();
+        let list = db.list_contexts().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "Dev Role");
+
+        let found = db.get_context("ctx1").unwrap();
+        assert!(found.is_some());
+        assert!(db.get_context("nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_stats() {
+        let db = tmp_db();
+        let stats = db.stats();
+        assert_eq!(stats["prompts"], 0);
+        assert_eq!(stats["history"], 0);
+    }
+}

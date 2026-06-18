@@ -1,30 +1,18 @@
-//! Platform-specific accessibility service.
+//! Windows UIAutomation impl.
 //!
-//! Windows: `uiautomation` crate v0.16 (UIAutomation API).
-//! Other platforms: no-op stub (MVP is Windows-only).
+//! Uses `uiautomation` crate v0.16 (UIAutomation API).
 
 use crate::types::Position;
 use super::{AccessError, IAccessibilityService};
 
-#[cfg(windows)]
-pub type AccessibilityService = WindowsAccessibilityService;
-
-#[cfg(not(windows))]
-pub type AccessibilityService = StubAccessibilityService;
-
-// ─── Windows impl ────────────────────────────────────────────────────────
-
-#[cfg(windows)]
 pub struct WindowsAccessibilityService;
 
-#[cfg(windows)]
 impl WindowsAccessibilityService {
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self)
     }
 }
 
-#[cfg(windows)]
 impl IAccessibilityService for WindowsAccessibilityService {
     fn get_active_element_text(&self) -> Result<String, AccessError> {
         use uiautomation::UIAutomation;
@@ -54,8 +42,13 @@ impl IAccessibilityService for WindowsAccessibilityService {
     }
 
     fn get_caret_position(&self) -> Result<Position, AccessError> {
-        // MVP: return a safe default. Full caret tracking needs
-        // ITextRangeProvider — deferred post-MVP. Overlay centers if unknown.
+        // Spec §7: capture caret pos via UIA, or fallback to mouse pos.
+        // UIA caret tracking needs ITextRangeProvider (deferred); use mouse
+        // position as the caret fallback so the overlay appears where the user
+        // is actually looking.
+        if let Some(pos) = mouse_position() {
+            return Ok(pos);
+        }
         Ok(Position { x: 400.0, y: 300.0 })
     }
 
@@ -80,28 +73,21 @@ impl IAccessibilityService for WindowsAccessibilityService {
     }
 }
 
-// ─── Stub (macOS / Linux) ────────────────────────────────────────────────
+/// Get current mouse cursor position via Win32 `GetCursorPos` (spec §7 fallback).
+fn mouse_position() -> Option<Position> {
+    #[repr(C)]
+    struct Point { x: i32, y: i32 }
 
-#[cfg(not(windows))]
-pub struct StubAccessibilityService;
+    extern "system" {
+        fn GetCursorPos(lppoint: *mut Point) -> i32;
+    }
 
-#[cfg(not(windows))]
-impl StubAccessibilityService {
-    pub fn new() -> anyhow::Result<Self> {
-        tracing::warn!("accessibility service: stub (non-Windows platform)");
-        Ok(Self)
-    }
-}
-
-#[cfg(not(windows))]
-impl IAccessibilityService for StubAccessibilityService {
-    fn get_active_element_text(&self) -> Result<String, AccessError> {
-        Err(AccessError::Api("accessibility not implemented on this platform".into()))
-    }
-    fn get_caret_position(&self) -> Result<Position, AccessError> {
-        Err(AccessError::Api("accessibility not implemented on this platform".into()))
-    }
-    fn set_element_text(&self, _text: &str) -> Result<(), AccessError> {
-        Err(AccessError::Api("accessibility not implemented on this platform".into()))
+    let mut pt = Point { x: 0, y: 0 };
+    // SAFETY: GetCursorPos writes to our local Point; no aliasing.
+    let ok = unsafe { GetCursorPos(&mut pt) };
+    if ok != 0 {
+        Some(Position { x: pt.x as f64, y: pt.y as f64 })
+    } else {
+        None
     }
 }

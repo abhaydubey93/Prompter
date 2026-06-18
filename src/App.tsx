@@ -1,11 +1,11 @@
 /** Main window — Settings + Prompt Library + History. */
 import { useEffect, useState } from "react";
 import {
-  cmd,
+  cmd, onHotkeyError,
   type Prompt, type Settings, type HistoryEntry,
 } from "./lib/tauri";
 import {
-  Settings as SettingsIcon, BookOpen, History, Zap, Trash2, Search,
+  Settings as SettingsIcon, BookOpen, History, Zap, Trash2, Search, AlertTriangle,
 } from "lucide-react";
 
 type Tab = "library" | "history" | "settings";
@@ -16,10 +16,23 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [search, setSearch] = useState("");
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     loadLibrary();
     loadSettings();
+  }, []);
+
+  // Listen for hotkey conflict errors (spec §11 GAP-7).
+  useEffect(() => {
+    const setup = async () => {
+      const unlisten = await onHotkeyError((ev) => {
+        setToast(`Hotkey "${ev.shortcut}" conflict: ${ev.message}`);
+        setTimeout(() => setToast(null), 5000);
+      });
+      return () => unlisten();
+    };
+    setup();
   }, []);
 
   const loadLibrary = async () => {
@@ -52,6 +65,14 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-bg-900 text-gray-200">
+      {/* ── Toast (hotkey conflict, spec §11 GAP-7) ─────────────── */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 bg-red-900/90 border border-red-700 rounded-lg text-red-200 text-sm shadow-overlay">
+          <AlertTriangle size={16} />
+          <span className="flex-1">{toast}</span>
+          <button onClick={() => setToast(null)} className="hover:text-white text-xs">✕</button>
+        </div>
+      )}
       {/* ── Sidebar ──────────────────────────────────────────────── */}
       <aside className="w-56 bg-bg-800 border-r border-bg-600 flex flex-col shrink-0">
         <div className="px-4 py-4 flex items-center gap-2 border-b border-bg-600">

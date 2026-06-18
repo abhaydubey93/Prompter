@@ -5,11 +5,13 @@
 //! routes to the chosen provider, streams chunks back to the UI via Tauri
 //! events, then produces a heuristic quality score and a unified diff.
 
+mod frameworks;
+
+pub use frameworks::FrameworkPack;
+
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tracing::info;
 
@@ -17,87 +19,15 @@ use crate::db::DbService;
 use crate::providers::{build, ProviderError};
 use crate::types::{ChatParams, ContextProfile, Message, OptimizeRequest, OptimizeResult};
 
-/// A framework pack loaded from JSON.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FrameworkPack {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub variables: Vec<String>,
-    pub template: String,
-}
-
 pub struct OptimizationEngine {
     frameworks: HashMap<String, FrameworkPack>,
 }
 
 impl OptimizationEngine {
-    /// Load all `*.json` files from `framework_packs/` relative to the binary
-    /// (or fall back to a compile-time embedded path).
+    /// Load framework packs and build the engine.
     pub fn new(app_data_dir: &std::path::Path) -> anyhow::Result<Self> {
-        let packs_dir = app_data_dir.join("framework_packs");
-        // Also look next to the binary (for dev).
-        let mut frameworks = HashMap::new();
-
-        let mut load_from = |dir: &PathBuf| -> anyhow::Result<()> {
-            if !dir.exists() {
-                return Ok(());
-            }
-            for entry in std::fs::read_dir(dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.extension().map_or(false, |e| e == "json") {
-                    let content = std::fs::read_to_string(&path)?;
-                    let pack: FrameworkPack = serde_json::from_str(&content)?;
-                    info!(pack_id = %pack.id, "loaded framework pack");
-                    frameworks.insert(pack.id.clone(), pack);
-                }
-            }
-            Ok(())
-        };
-
-        // Try next-to-binary first (dev / `cargo run`).
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-        if let Some(ref dir) = exe_dir {
-            let _ = load_from(&dir.join("framework_packs"));
-        }
-        // Then app data dir.
-        load_from(&packs_dir)?;
-
-        // Hardcoded fallbacks in case no files found on disk.
-        if frameworks.is_empty() {
-            let create = FrameworkPack {
-                id: "CREATE".into(),
-                name: "CREATE".into(),
-                variables: vec!["context".into(), "role".into(), "task".into(), "explanation".into(), "constraints".into(), "tone".into(), "extras".into()],
-                template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the CREATE framework.
-
-CREATE = Context, Request, Explanation, Action, Tone, Extras.
-Return ONLY the rewritten prompt.
-
-Raw prompt:
-{{ raw_prompt }}
-{% if context %}Context: {{ context }}{% endif %}
-{% if tone %}Tone: {{ tone }}{% endif %}"#
-                    .into(),
-            };
-            let ape = FrameworkPack {
-                id: "APE".into(),
-                name: "APE (Action, Purpose, Expectation)".into(),
-                variables: vec!["action".into(), "purpose".into(), "expectation".into()],
-                template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the APE framework (Action, Purpose, Expectation).
-Return ONLY the rewritten prompt.
-
-Raw prompt:
-{{ raw_prompt }}"#
-                    .into(),
-            };
-            frameworks.insert("CREATE".into(), create);
-            frameworks.insert("APE".into(), ape);
-        }
-
+        let frameworks = frameworks::load_all(app_data_dir)?;
+        info!("{} framework(s) loaded", frameworks.len());
         Ok(Self { frameworks })
     }
 
@@ -143,8 +73,6 @@ Raw prompt:
     }
 
     /// Run the full optimization: render → stream → emit events → emit done.
-    ///
-    /// Returns the accumulated optimized text (also logged to history).
     pub async fn optimize(
         &self,
         app: AppHandle,
@@ -233,11 +161,7 @@ Raw prompt:
         Ok(result)
     }
 
-    /// Heuristic quality score 0–100.
-    ///
-    /// Rewards: length (100–500 words sweet spot), structure markers
-    /// (headings, bullet dashes, numbered lists), specificity signals
-    /// (quantified phrases, explicit constraints).
+    /// Heuristic quality score 0–100 (spec §5).
     fn score_prompt(text: &str) -> u32 {
         if text.is_empty() { return 0; }
         let mut score: u32 = 30; // baseline
@@ -245,7 +169,6 @@ Raw prompt:
         let words: Vec<&str> = text.split_whitespace().collect();
         let word_count = words.len() as u32;
 
-        // Length reward (optimal 50–300 words for a prompt).
         match word_count {
             0..=10 => score += 0,
             11..=50 => score += 10,
@@ -296,11 +219,55 @@ Raw prompt:
             .unified_diff()
             .header("Original", "Optimized")
             .to_string();
-        // Truncate very long diffs for the overlay (keep first 2 KB).
         if patch.len() > 2048 {
             format!("{}…\n(truncated)", &patch[..2048])
         } else {
             patch
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_score_prompt_empty() {
+        assert_eq!(OptimizationEngine::score_prompt(""), 0);
+    }
+
+    #[test]
+    fn test_score_prompt_short() {
+        let s = OptimizationEngine::score_prompt("hello");
+        assert!(s > 0 && s < 50, "short prompt should score low, got {s}");
+    }
+
+    #[test]
+    fn test_score_prompt_structured() {
+        let s = OptimizationEngine::score_prompt(
+            "# Task\n- Step one\n- Step two\nFor instance, format the output.\n1. Define criteria\n2. At least 3 examples"
+        );
+        assert!(s >= 70, "structured prompt should score high, got {s}");
+    }
+
+    #[test]
+    fn test_score_prompt_repetitive() {
+        let s = OptimizationEngine::score_prompt(&"word ".repeat(200));
+        assert!(s < 50, "repetitive text should be penalized, got {s}");
+    }
+
+    #[test]
+    fn test_compute_diff_nonempty() {
+        let d = OptimizationEngine::compute_diff("old text", "new text");
+        assert!(d.contains("--- Original"));
+        assert!(d.contains("+++ Optimized"));
+    }
+
+    #[test]
+    fn test_compute_diff_truncation() {
+        let raw = "a\n".repeat(2000);
+        let opt = "b\n".repeat(2000);
+        let d = OptimizationEngine::compute_diff(&raw, &opt);
+        assert!(d.len() <= 2100, "diff should be truncated, got {} bytes", d.len());
     }
 }

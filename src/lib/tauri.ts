@@ -62,10 +62,26 @@ export function onOptError(
   return listen<OptErrorEvent>("opt_error", (evt) => cb(evt.payload));
 }
 
-export type OverlayShowEvent = { text: string; position: Position };
+export type OverlayShowEvent = { text: string };
 
 export function onOverlayShow(
   cb: (e: OverlayShowEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<OverlayShowEvent>("overlay_show", (evt) => cb(evt.payload));
+}
+
+export type ProviderStatusEvent = { provider: string; alive: boolean };
+
+export function onProviderStatus(
+  cb: (e: ProviderStatusEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ProviderStatusEvent>("provider_status", (evt) => cb(evt.payload));
+}
+
+export type HotkeyErrorEvent = { shortcut: string; message: string };
+
+export function onHotkeyError(
+  cb: (e: HotkeyErrorEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<HotkeyErrorEvent>("hotkey_error", (evt) => cb(evt.payload));
 }

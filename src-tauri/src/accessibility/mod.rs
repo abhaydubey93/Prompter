@@ -6,9 +6,15 @@
 
 use crate::types::Position;
 
-pub mod platform; // `platform.rs` does cfg-gate
+#[cfg(windows)]
+mod win;
+#[cfg(not(windows))]
+mod stub;
 
-pub use platform::AccessibilityService;
+#[cfg(windows)]
+pub use win::WindowsAccessibilityService as AccessibilityService;
+#[cfg(not(windows))]
+pub use stub::StubAccessibilityService as AccessibilityService;
 
 /// Unified interface for reading/writing text in the active application.
 pub trait IAccessibilityService: Send + Sync {

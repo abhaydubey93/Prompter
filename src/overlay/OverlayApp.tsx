@@ -1,7 +1,7 @@
 /** Overlay window root — renders the PromptOpt overlay UI. */
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
-  cmd, onOptChunk, onOptDone, onOptError, onOverlayShow,
+  cmd, onOptChunk, onOptDone, onOptError, onOverlayShow, onProviderStatus,
   type FrameworkInfo, type ModelInfo, type Settings,
 } from "../lib/tauri";
 import {
@@ -24,6 +24,7 @@ export default function OverlayApp() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("ollama:llama3");
   const [_settings, setSettings] = useState<Settings | null>(null);
+  const [providerAlive, setProviderAlive] = useState(true);
 
   const sessionIdRef = useRef("");
   const rawRef = useRef<HTMLTextAreaElement>(null);
@@ -59,15 +60,27 @@ export default function OverlayApp() {
     const cleaners: UnlistenFn[] = [];
     const setup = async () => {
       // Listen for overlay_show event from hotkey handler (spec §7).
-      cleaners.push(await onOverlayShow((ev) => {
+      // Falls back to capture_text IPC if no text received (spec §2 GAP-8).
+      cleaners.push(await onOverlayShow(async (ev) => {
         // Reset state for new optimization session.
-        setRawText(ev.text || "");
         setOptimizedText("");
         setScore(null);
         setDiff("");
         setDiffVisible(false);
         setError(null);
         setIsStreaming(false);
+        const text = ev.text || "";
+        if (text) {
+          setRawText(text);
+        } else {
+          // Fallback: capture directly via IPC (overlay opened without hotkey).
+          try {
+            const result = await cmd.captureText();
+            setRawText(result.text);
+          } catch {
+            setRawText("");
+          }
+        }
       }));
 
       cleaners.push(await onOptChunk((ev) => {
@@ -87,6 +100,11 @@ export default function OverlayApp() {
           setError(ev.message);
           setIsStreaming(false);
         }
+      }));
+
+      // Provider health status from startup check (spec §11).
+      cleaners.push(await onProviderStatus((ev) => {
+        setProviderAlive(ev.alive);
       }));
     };
     setup();
@@ -258,6 +276,14 @@ export default function OverlayApp() {
           )}
         </div>
       </div>
+
+      {/* ── Provider status banner (spec §11) ──────────────────────── */}
+      {!providerAlive && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-yellow-900/30 border-t border-yellow-800/40 text-yellow-300 text-xs shrink-0">
+          <AlertTriangle size={14} />
+          <span className="flex-1">Ollama not reachable — optimization will fail.</span>
+        </div>
+      )}
 
       {/* ── Error banner ────────────────────────────────────────────── */}
       {error && (

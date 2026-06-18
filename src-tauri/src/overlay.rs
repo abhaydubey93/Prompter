@@ -3,10 +3,16 @@
 //! Controls show/hide, caret/mouse-anchored positioning, and edge-aware
 //! placement. See spec §7, LLD §2.1–2.2.
 
+use std::sync::Mutex;
+
 use tauri::{AppHandle, Manager};
 use tracing::info;
 
 use crate::types::Position;
+
+/// Tracks the window that had focus before the overlay was shown,
+/// so we can restore it on hide (spec §7: "restore focus to prior target").
+pub struct PriorFocus(pub Mutex<Option<String>>);
 
 /// Show the overlay anchored near the given position, with edge-aware
 /// adjustments so it doesn't clip off-screen.
@@ -25,12 +31,21 @@ pub fn show_overlay(app: &AppHandle, pos: Position) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Hide the overlay and restore focus to the main/target window.
+/// Hide the overlay and restore focus to the prior target window (spec §7).
 pub fn hide_overlay(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         let _ = window.hide();
     }
-    // Focus back to main window.
+    // Restore focus to the window that was active before the overlay.
+    if let Some(prior) = app.try_state::<PriorFocus>() {
+        if let Some(label) = prior.0.lock().unwrap().take() {
+            if let Some(target) = app.get_webview_window(&label) {
+                let _ = target.set_focus();
+                return;
+            }
+        }
+    }
+    // Fallback: main window.
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_focus();
     }

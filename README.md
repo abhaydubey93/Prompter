@@ -63,7 +63,7 @@ Location: `%APPDATA%\PromptOpt\data.db`
 |---|---|
 | Shell | **Tauri 2** (Rust backend + WebView frontend) |
 | Backend | **Rust** (edition 2021) |
-| Frontend | **React 19** + **TypeScript 5.8** + **Vite 7** |
+| Frontend | **React 19** + **TypeScript 5.8** + **Vite 7** (spec §2 says React 18; 19 is superset-compatible) |
 | Styling | **Tailwind CSS 3.4** (dark theme, custom palette) |
 | Database | **SQLite** via `rusqlite` (bundled) |
 | Templates | **Minijinja 2** |

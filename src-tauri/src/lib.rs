@@ -44,6 +44,7 @@ pub fn run() {
         .manage(setup_db(&app_data_dir))
         .manage(setup_accessibility())
         .manage(setup_engine(&app_data_dir))
+        .manage(overlay::PriorFocus(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::capture_text,
             commands::optimize_prompt,

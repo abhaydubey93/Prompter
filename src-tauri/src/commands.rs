@@ -3,7 +3,7 @@
 //! See `design_docs/05_API_Design.md` §2 for the command catalogue.
 //! Each command is `#[tauri::command]` and takes Tauri managed state via params.
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::accessibility::{AccessibilityService, IAccessibilityService};
 use crate::db::DbService;
@@ -123,7 +123,27 @@ pub fn get_settings(db: State<'_, DbService>) -> Result<Settings, ApiError> {
 }
 
 #[tauri::command]
-pub fn set_setting(db: State<'_, DbService>, key: String, value: String) -> Result<(), ApiError> {
+pub fn set_setting(app: AppHandle, db: State<'_, DbService>, key: String, value: String) -> Result<(), ApiError> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    // If changing the hotkey, re-register the global shortcut (spec §11 GAP-5).
+    if key == "hotkey" {
+        let old = db.get_settings().map(|s| s.hotkey).unwrap_or_default();
+        db.set_setting(&key, &value).map_err(|e| ApiError::internal(e.to_string()))?;
+        // Unregister old shortcut.
+        if let Ok(shortcut) = old.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+            let _ = app.global_shortcut().unregister(shortcut);
+        }
+        // Register new — emit error if conflict (spec §11 GAP-7).
+        if let Err(e) = crate::hotkey::register(&app, &value) {
+            let _ = app.emit("hotkey_error", serde_json::json!({
+                "shortcut": value,
+                "message": e.to_string(),
+            }));
+        }
+        return Ok(());
+    }
+
     db.set_setting(&key, &value).map_err(|e| ApiError::internal(e.to_string()))
 }
 
