@@ -71,29 +71,27 @@ impl OptimizationEngine {
             let create = FrameworkPack {
                 id: "CREATE".into(),
                 name: "CREATE".into(),
-                variables: vec!["context".into()],
-                template: r#"You are an expert prompt engineer. Rewrite the user's raw prompt using the CREATE framework (Context, Request, Explanation, Action, Tone, Extras).
+                variables: vec!["context".into(), "role".into(), "task".into(), "explanation".into(), "constraints".into(), "tone".into(), "extras".into()],
+                template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the CREATE framework.
+
+CREATE = Context, Request, Explanation, Action, Tone, Extras.
 Return ONLY the rewritten prompt.
+
 Raw prompt:
-"""
 {{ raw_prompt }}
-"""
 {% if context %}Context: {{ context }}{% endif %}
-Make it specific, structured, and actionable."#
+{% if tone %}Tone: {{ tone }}{% endif %}"#
                     .into(),
             };
             let ape = FrameworkPack {
                 id: "APE".into(),
                 name: "APE (Action, Purpose, Expectation)".into(),
-                variables: vec!["context".into()],
-                template: r#"You are an expert prompt engineer. Rewrite the user's raw prompt using the APE framework.
+                variables: vec!["action".into(), "purpose".into(), "expectation".into()],
+                template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the APE framework (Action, Purpose, Expectation).
 Return ONLY the rewritten prompt.
+
 Raw prompt:
-"""
-{{ raw_prompt }}
-"""
-{% if context %}Context: {{ context }}{% endif %}
-Structure with labeled Action, Purpose, Expectation."#
+{{ raw_prompt }}"#
                     .into(),
             };
             frameworks.insert("CREATE".into(), create);

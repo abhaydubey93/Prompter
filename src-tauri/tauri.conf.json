@@ -22,8 +22,8 @@
       {
         "label": "overlay",
         "title": "PromptOpt Overlay",
-        "width": 440,
-        "height": 360,
+        "width": 400,
+        "height": 340,
         "resizable": true,
         "decorations": false,
         "alwaysOnTop": true,

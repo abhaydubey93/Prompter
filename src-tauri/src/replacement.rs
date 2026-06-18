@@ -9,14 +9,14 @@ use std::time::Duration;
 use tauri::AppHandle;
 use tracing::{info, warn};
 
-use crate::accessibility::{IAccessibilityService, AccessibilityService};
+use crate::accessibility::{AccessibilityService, IAccessibilityService};
 use crate::types::ReplaceResult;
 
 pub struct ReplacementService;
 
 impl ReplacementService {
     /// Replace text in the active field. Tries accessibility first, then
-    /// clipboard fallback (backup → set → paste → restore).
+    /// clipboard fallback (backup → set → paste → restore) per spec §6.
     pub fn replace(
         app: &AppHandle,
         access: &AccessibilityService,
@@ -44,7 +44,7 @@ impl ReplacementService {
             }
         }
 
-        // Strategy 2: Clipboard simulation
+        // Strategy 2: Clipboard simulation (spec §6)
         if let Ok(res) = Self::clipboard_fallback(app, text) {
             return res;
         }
@@ -64,16 +64,26 @@ impl ReplacementService {
             return Err(());
         }
 
-        // 3. For MVP: clipboard set successfully. We notify via result.
-        // Full synthetic Ctrl+V requires careful SendInput — deferred post-MVP.
-        // The overlay UI will tell user "press Ctrl+V" if fallback=true.
+        // 3. Synthetic Ctrl+V paste via enigo (spec §6).
+        //    Small delay so clipboard is committed before paste.
         thread::sleep(Duration::from_millis(60));
+        let pasted = simulate_paste();
+        if pasted {
+            info!("synthetic Ctrl+V delivered via enigo");
+        } else {
+            warn!("enigo paste simulation unavailable — user must press Ctrl+V");
+        }
 
-        // 5. Restore original clipboard after short delay.
+        // 4. Restore original clipboard after paste settles.
+        thread::sleep(Duration::from_millis(60));
         Self::restore_clipboard(app, backup);
 
         info!("replacement via clipboard fallback (text set to clipboard)");
-        Ok(ReplaceResult { success: true, fallback: true })
+        Ok(ReplaceResult {
+            success: pasted,
+            // fallback=true means "used clipboard path"; UI may also prompt Ctrl+V if paste failed.
+            fallback: true,
+        })
     }
 
     fn restore_clipboard(app: &AppHandle, backup: Option<String>) {
@@ -82,4 +92,30 @@ impl ReplacementService {
             let _ = app.clipboard().write_text(text);
         }
     }
+}
+
+/// Send a synthetic Ctrl+V keypress on Windows via enigo.
+/// Returns `false` on non-Windows or on enigo error.
+#[cfg(windows)]
+fn simulate_paste() -> bool {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    let mut enigo = match Enigo::new(&Settings::default()) {
+        Ok(e) => e,
+        Err(e) => {
+            warn!("enigo init failed: {e}");
+            return false;
+        }
+    };
+    // Press Ctrl, click V, release Ctrl.
+    if enigo.key(Key::Control, Direction::Press).is_err() {
+        return false;
+    }
+    let v_ok = enigo.key(Key::Unicode('v'), Direction::Click).is_ok();
+    let _ = enigo.key(Key::Control, Direction::Release);
+    v_ok
+}
+
+#[cfg(not(windows))]
+fn simulate_paste() -> bool {
+    false
 }

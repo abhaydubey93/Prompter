@@ -15,7 +15,7 @@ pub fn show_overlay(app: &AppHandle, pos: Position) -> anyhow::Result<()> {
         anyhow::bail!("overlay window not found");
     };
 
-    let (x, y) = compute_position(pos, 440.0, 360.0);
+    let (x, y) = compute_position(pos, 400.0, 340.0);
     let _ = window.set_position(tauri::Position::Physical(
         tauri::PhysicalPosition::new(x as i32, y as i32),
     ));

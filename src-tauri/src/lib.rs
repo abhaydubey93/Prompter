@@ -13,8 +13,8 @@ pub mod providers;
 pub mod replacement;
 pub mod types;
 
-use tauri::Manager;
-use tracing::info;
+use tauri::{Emitter, Manager};
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use accessibility::AccessibilityService;
@@ -76,6 +76,25 @@ pub fn run() {
                 tracing::warn!("failed to register hotkey '{shortcut}': {e}");
             }
 
+            // Startup Ollama health check (spec §11 mitigation).
+            // Run async so we don't block setup; emits a status event the UI can use.
+            if let Some(ref s) = settings {
+                let ollama_url = s.ollama_url.clone();
+                let handle2 = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let alive = ollama_health(&ollama_url).await;
+                    if alive {
+                        info!(%ollama_url, "ollama reachable at startup");
+                    } else {
+                        warn!(%ollama_url, "ollama NOT reachable at startup — provider will be marked unavailable");
+                    }
+                    let _ = handle2.emit("provider_status", serde_json::json!({
+                        "provider": "ollama",
+                        "alive": alive,
+                    }));
+                });
+            }
+
             // Ensure overlay window starts hidden.
             if let Some(overlay) = app.get_webview_window("overlay") {
                 let _ = overlay.hide();
@@ -100,4 +119,14 @@ fn setup_accessibility() -> AccessibilityService {
 
 fn setup_engine(app_data_dir: &std::path::Path) -> OptimizationEngine {
     OptimizationEngine::new(app_data_dir).expect("failed to init optimization engine")
+}
+
+/// Quick TCP-level liveness probe against the Ollama `/api/tags` endpoint.
+/// Used at startup so the UI can mark the provider dead (spec §11).
+async fn ollama_health(base_url: &str) -> bool {
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    match reqwest::Client::new().get(&url).send().await {
+        Ok(r) => r.status().is_success(),
+        Err(_) => false,
+    }
 }

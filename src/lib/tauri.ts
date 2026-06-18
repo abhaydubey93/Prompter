@@ -61,3 +61,11 @@ export function onOptError(
 ): Promise<UnlistenFn> {
   return listen<OptErrorEvent>("opt_error", (evt) => cb(evt.payload));
 }
+
+export type OverlayShowEvent = { text: string; position: Position };
+
+export function onOverlayShow(
+  cb: (e: OverlayShowEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<OverlayShowEvent>("overlay_show", (evt) => cb(evt.payload));
+}

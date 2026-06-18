@@ -1,7 +1,7 @@
 /** Overlay window root — renders the PromptOpt overlay UI. */
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
-  cmd, onOptChunk, onOptDone, onOptError,
+  cmd, onOptChunk, onOptDone, onOptError, onOverlayShow,
   type FrameworkInfo, type ModelInfo, type Settings,
 } from "../lib/tauri";
 import {
@@ -49,14 +49,6 @@ export default function OverlayApp() {
         } catch {
           // Ollama not running — models stay empty.
         }
-
-        // Capture text from active field.
-        try {
-          const cap = await cmd.captureText();
-          if (cap.text) setRawText(cap.text);
-        } catch {
-          // Accessibility may not be available.
-        }
       } catch (e: any) {
         console.error("init error", e);
       }
@@ -66,6 +58,18 @@ export default function OverlayApp() {
     type UnlistenFn = () => void;
     const cleaners: UnlistenFn[] = [];
     const setup = async () => {
+      // Listen for overlay_show event from hotkey handler (spec §7).
+      cleaners.push(await onOverlayShow((ev) => {
+        // Reset state for new optimization session.
+        setRawText(ev.text || "");
+        setOptimizedText("");
+        setScore(null);
+        setDiff("");
+        setDiffVisible(false);
+        setError(null);
+        setIsStreaming(false);
+      }));
+
       cleaners.push(await onOptChunk((ev) => {
         if (ev.session_id === sessionIdRef.current) {
           setOptimizedText((prev) => prev + ev.text);
@@ -115,14 +119,20 @@ export default function OverlayApp() {
   const handleAccept = useCallback(async () => {
     if (!optimizedText.trim()) return;
     try {
-      await cmd.acceptReplacement(optimizedText);
+      const result = await cmd.acceptReplacement(optimizedText);
+      if (result.fallback) {
+        // Clipboard fallback — tell user to paste.
+        setError("Clipboard fallback: press Ctrl+V to paste enhanced text.");
+      }
+      // Success — hide overlay.
+      cmd.hideOverlay().catch(() => {});
     } catch (e: any) {
       // Fallback: copy to clipboard and let user paste.
       try {
         await navigator.clipboard.writeText(optimizedText);
-        alert("Replaced via clipboard fallback. Press Ctrl+V to paste.");
+        setError("Replacement failed. Press Ctrl+V to paste.");
       } catch {
-        alert("Replacement failed. Text copied — paste manually.");
+        setError("Replacement failed. Text copied — paste manually.");
       }
     }
   }, [optimizedText]);
@@ -145,16 +155,21 @@ export default function OverlayApp() {
     }
   }, [rawText, optimizedText, selectedFramework, selectedModel, score]);
 
-  // ── Keyboard shortcuts inside overlay ─────────────────────────────────
+  // ── Keyboard shortcuts inside overlay (spec §7) ───────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         cmd.hideOverlay().catch(() => {});
       }
+      // Enter = Accept (spec §7)
+      if (e.key === "Enter" && optimizedText.trim() && !isStreaming) {
+        e.preventDefault();
+        handleAccept();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [optimizedText, isStreaming, handleAccept]);
 
   // ── Score color ───────────────────────────────────────────────────────
   const scoreColor = score == null ? "text-gray-500"

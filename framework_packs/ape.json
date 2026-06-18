@@ -1,6 +1,6 @@
 {
   "id": "APE",
   "name": "APE (Action, Purpose, Expectation)",
-  "variables": ["action", "purpose", "expectation"],
-  "template": "You are an expert prompt engineer. Rewrite the user's raw prompt using the APE framework, which makes three things explicit: the Action to perform, its Purpose, and the Expected output.\n\nReturn ONLY the rewritten prompt, no preamble or commentary.\n\nRaw prompt to optimize:\n\"\"\"\n{{ raw_prompt }}\n\"\"\"\n{% if context %}Persistent context: {{ context }}\n{% endif %}{% if tone %}Desired tone: {{ tone }}\n{% endif %}{% if audience %}Target audience: {{ audience }}\n{% endif %}Structure the result with clearly labeled sections."
+  "variables": ["action","purpose","expectation"],
+  "template": "You are a prompt engineer. Rewrite the user's raw prompt using the APE framework (Action, Purpose, Expectation).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}"
 }
