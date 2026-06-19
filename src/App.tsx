@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import {
   cmd, onHotkeyError,
-  type Prompt, type Settings, type HistoryEntry,
+  type Prompt, type Settings, type HistoryEntry, type ProviderConfig, type FrameworkInfo, type ContextProfile,
 } from "./lib/tauri";
 import {
   Settings as SettingsIcon, BookOpen, History, Zap, Trash2, Search, AlertTriangle,
@@ -166,21 +166,10 @@ export default function App() {
         )}
 
         {tab === "settings" && settings && (
-          <div className="p-6 max-w-xl">
-            <h2 className="text-lg font-semibold mb-4">Settings</h2>
-            <SettingRow label="Hotkey" value={settings.hotkey} onChange={(v) => updateSetting("hotkey", v)} />
-            <SettingRow label="Theme" value={settings.theme} onChange={(v) => updateSetting("theme", v)} />
-            <SettingRow label="Default Framework" value={settings.default_framework} onChange={(v) => updateSetting("default_framework", v)} />
-            <SettingRow label="Default Model" value={settings.default_model} onChange={(v) => updateSetting("default_model", v)} />
-            <SettingRow label="Ollama URL" value={settings.ollama_url} onChange={(v) => updateSetting("ollama_url", v)} />
-
-            <div className="mt-8 p-4 bg-bg-700 rounded-lg border border-bg-600">
-              <h3 className="text-sm font-semibold mb-2">Keyboard Shortcuts</h3>
-              <KbdRow keys={["Ctrl", "Shift", "E"]} action="Open overlay / optimize selected text" />
-              <KbdRow keys={["Enter"]} action="Accept and replace in-place" />
-              <KbdRow keys={["Esc"]} action="Close overlay" />
-            </div>
-          </div>
+          <SettingsTabs
+            settings={settings}
+            onSetting={updateSetting}
+          />
         )}
       </main>
     </div>
@@ -229,6 +218,334 @@ function KbdRow({ keys, action }: { keys: string[]; action: string }) {
         ))}
       </div>
       <span className="text-gray-500">{action}</span>
+    </div>
+  );
+}
+
+// ── Settings — 5 sub-tabs (use-case §15) ──────────────────────────────────
+
+type SettingsTab = "general" | "providers" | "frameworks" | "context" | "privacy";
+
+function SettingsTabs({ settings, onSetting }: {
+  settings: Settings;
+  onSetting: (k: keyof Settings, v: string) => void;
+}) {
+  const [stab, setStab] = useState<SettingsTab>("general");
+  const tabs: { id: SettingsTab; label: string }[] = [
+    { id: "general", label: "General" },
+    { id: "providers", label: "Providers" },
+    { id: "frameworks", label: "Frameworks" },
+    { id: "context", label: "Context" },
+    { id: "privacy", label: "Privacy" },
+  ];
+
+  return (
+    <div className="p-6 max-w-2xl">
+      <h2 className="text-lg font-semibold mb-4">Settings</h2>
+      <div className="flex gap-1 mb-4 border-b border-bg-700">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setStab(t.id)}
+            className={`px-3 py-2 text-xs border-b-2 ${
+              stab === t.id ? "border-accent text-white" : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {stab === "general" && (
+        <GeneralTab settings={settings} onSetting={onSetting} />
+      )}
+      {stab === "providers" && <ProvidersTab />}
+      {stab === "frameworks" && <FrameworksTab defaultFramework={settings.default_framework} onFramework={(v) => onSetting("default_framework", v)} />}
+      {stab === "context" && <ContextTab />}
+      {stab === "privacy" && <PrivacyTab />}
+    </div>
+  );
+}
+
+function GeneralTab({ settings, onSetting }: {
+  settings: Settings;
+  onSetting: (k: keyof Settings, v: string) => void;
+}) {
+  const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  useEffect(() => {
+    cmd.listFrameworks().then(setFrameworks).catch(() => {});
+    cmd.listProviders().then(setProviders).catch(() => {});
+  }, []);
+  return (
+    <div>
+      <SettingRow label="Hotkey" value={settings.hotkey} onChange={(v) => onSetting("hotkey", v)} />
+      <div className="flex items-center justify-between py-3 border-b border-bg-700">
+        <span className="text-sm text-gray-400">Theme</span>
+        <select
+          value={settings.theme}
+          onChange={(e) => onSetting("theme", e.target.value)}
+          className="bg-bg-700 border border-bg-600 rounded px-3 py-1.5 text-xs w-56"
+        >
+          <option value="dark">dark</option>
+          <option value="light">light</option>
+        </select>
+      </div>
+      <div className="flex items-center justify-between py-3 border-b border-bg-700">
+        <span className="text-sm text-gray-400">Default Framework</span>
+        <select
+          value={settings.default_framework}
+          onChange={(e) => onSetting("default_framework", e.target.value)}
+          className="bg-bg-700 border border-bg-600 rounded px-3 py-1.5 text-xs w-56"
+        >
+          {frameworks.map((f) => (
+            <option key={f.id} value={f.id}>{f.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex items-center justify-between py-3 border-b border-bg-700">
+        <span className="text-sm text-gray-400">Default Provider</span>
+        <select
+          value={settings.default_provider_id || ""}
+          onChange={(e) => onSetting("default_provider_id", e.target.value)}
+          className="bg-bg-700 border border-bg-600 rounded px-3 py-1.5 text-xs w-56"
+        >
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>{p.label}</option>
+          ))}
+        </select>
+      </div>
+      <SettingRow label="Default Model" value={settings.default_model} onChange={(v) => onSetting("default_model", v)} />
+
+      <div className="mt-8 p-4 bg-bg-700 rounded-lg border border-bg-600">
+        <h3 className="text-sm font-semibold mb-2">Keyboard Shortcuts</h3>
+        <KbdRow keys={["Ctrl", "Shift", "E"]} action="Open overlay / optimize selected text" />
+        <KbdRow keys={["Enter"]} action="Accept and replace in-place" />
+        <KbdRow keys={["Esc"]} action="Close overlay" />
+      </div>
+    </div>
+  );
+}
+
+function ProvidersTab() {
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [editing, setEditing] = useState<ProviderConfig | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testMsg, setTestMsg] = useState<Record<string, string>>({});
+
+  const load = () => cmd.listProviders().then(setProviders).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  async function toggle(p: ProviderConfig, enabled: boolean) {
+    await cmd.setProviderEnabled(p.id, enabled);
+    load();
+  }
+  async function test(p: ProviderConfig) {
+    setTesting(p.id);
+    setTestMsg((m) => ({ ...m, [p.id]: "..." }));
+    try {
+      const r = await cmd.testProvider(p.id);
+      setTestMsg((m) => ({ ...m, [p.id]: r.alive ? `OK — ${r.models.length} models` : `FAIL: ${r.error ?? "unreachable"}` }));
+    } catch (e) {
+      setTestMsg((m) => ({ ...m, [p.id]: `ERR: ${e}` }));
+    } finally {
+      setTesting(null);
+    }
+  }
+  async function saveEdit() {
+    if (!editing) return;
+    await cmd.saveProvider(editing);
+    if (apiKey) {
+      await cmd.setProviderKey(editing.id, apiKey);
+      setApiKey("");
+    }
+    setEditing(null);
+    load();
+  }
+  async function del(id: string) {
+    if (!confirm("Delete this provider?")) return;
+    await cmd.deleteProvider(id);
+    load();
+  }
+
+  return (
+    <div>
+      {providers.map((p) => (
+        <div key={p.id} className="py-3 border-b border-bg-700">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm text-gray-200">{p.label}</div>
+              <div className="text-xs text-gray-500">{p.kind} · {p.base_url}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="checkbox" checked={p.enabled} onChange={(e) => toggle(p, e.target.checked)} />
+              <button onClick={() => test(p)} disabled={testing === p.id} className="text-xs px-2 py-1 bg-bg-700 rounded hover:bg-bg-600">Test</button>
+              <button onClick={() => { setEditing({ ...p }); setApiKey(""); }} className="text-xs px-2 py-1 bg-bg-700 rounded hover:bg-bg-600">Edit</button>
+              <button onClick={() => del(p.id)} className="text-xs px-2 py-1 bg-bg-700 rounded hover:bg-red-900">Del</button>
+            </div>
+          </div>
+          {testMsg[p.id] && <div className="text-xs mt-1 text-gray-400">{testMsg[p.id]}</div>}
+        </div>
+      ))}
+
+      {editing && (
+        <div className="mt-4 p-4 bg-bg-700 rounded-lg border border-bg-600 space-y-2">
+          <div className="text-sm font-semibold">Edit {editing.label}</div>
+          <input value={editing.label} onChange={(e) => setEditing({ ...editing, label: e.target.value })} placeholder="Label" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          <input value={editing.base_url} onChange={(e) => setEditing({ ...editing, base_url: e.target.value })} placeholder="Base URL" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          <input value={editing.default_model} onChange={(e) => setEditing({ ...editing, default_model: e.target.value })} placeholder="Default model (bare name)" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          {editing.api_key_slot && (
+            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="API key (write-only; stored in keychain)" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          )}
+          <div className="flex gap-2">
+            <button onClick={saveEdit} className="text-xs px-3 py-1 bg-emerald-700 rounded hover:bg-emerald-600">Save</button>
+            <button onClick={() => setEditing(null)} className="text-xs px-3 py-1 bg-bg-600 rounded">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={() => setEditing({ id: "", kind: "openai_compat", label: "New Provider", base_url: "https://", api_key_slot: "new", default_model: "", enabled: false, sort_order: 100 })}
+        className="mt-4 text-xs px-3 py-1.5 bg-bg-700 rounded hover:bg-bg-600"
+      >+ Add custom provider</button>
+    </div>
+  );
+}
+
+function FrameworksTab({ defaultFramework, onFramework }: {
+  defaultFramework: string;
+  onFramework: (v: string) => void;
+}) {
+  const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([]);
+  const load = () => cmd.listFrameworks().then(setFrameworks).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  function importJson() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      try {
+        const pack = JSON.parse(text);
+        await cmd.importFramework({ ...pack, template: pack.template ?? "{{ raw_prompt }}" });
+        load();
+      } catch (e) {
+        alert(`Import failed: ${e}`);
+      }
+    };
+    input.click();
+  }
+  async function del(id: string) {
+    try {
+      await cmd.deleteFramework(id);
+      load();
+    } catch (e) {
+      alert(`Cannot delete (likely built-in): ${e}`);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between py-3 border-b border-bg-700">
+        <span className="text-sm text-gray-400">Default Framework</span>
+        <select
+          value={defaultFramework}
+          onChange={(e) => onFramework(e.target.value)}
+          className="bg-bg-700 border border-bg-600 rounded px-3 py-1.5 text-xs w-56"
+        >
+          {frameworks.map((f) => (
+            <option key={f.id} value={f.id}>{f.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="mt-4 space-y-2">
+        {frameworks.map((f) => (
+          <div key={f.id} className="flex items-center justify-between py-2 border-b border-bg-700">
+            <span className="text-sm text-gray-200">{f.name}</span>
+            <button onClick={() => del(f.id)} className="text-xs text-gray-500 hover:text-red-400">delete</button>
+          </div>
+        ))}
+      </div>
+      <button onClick={importJson} className="mt-4 text-xs px-3 py-1.5 bg-bg-700 rounded hover:bg-bg-600">+ Import JSON pack</button>
+    </div>
+  );
+}
+
+function ContextTab() {
+  const [profiles, setProfiles] = useState<ContextProfile[]>([]);
+  const [draft, setDraft] = useState<ContextProfile | null>(null);
+  const load = () => cmd.listContexts().then(setProfiles).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  async function save() {
+    if (!draft || !draft.name) return;
+    await cmd.saveContext({ ...draft, id: draft.id || crypto.randomUUID() });
+    setDraft(null);
+    load();
+  }
+  return (
+    <div>
+      <div className="space-y-2">
+        {profiles.map((c) => (
+          <div key={c.id} className="flex items-center justify-between py-2 border-b border-bg-700">
+            <div>
+              <div className="text-sm text-gray-200">{c.name}</div>
+              <div className="text-xs text-gray-500">{[c.role, c.audience, c.tone].filter(Boolean).join(" · ")}</div>
+            </div>
+            <button onClick={() => setDraft({ ...c })} className="text-xs text-gray-500 hover:text-gray-300">edit</button>
+          </div>
+        ))}
+      </div>
+      {draft && (
+        <div className="mt-4 p-4 bg-bg-700 rounded-lg border border-bg-600 space-y-2">
+          <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Name" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          <input value={draft.role ?? ""} onChange={(e) => setDraft({ ...draft, role: e.target.value })} placeholder="Role" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          <input value={draft.audience ?? ""} onChange={(e) => setDraft({ ...draft, audience: e.target.value })} placeholder="Audience" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          <input value={draft.tone ?? ""} onChange={(e) => setDraft({ ...draft, tone: e.target.value })} placeholder="Tone" className="w-full bg-bg-950 border border-bg-600 rounded px-2 py-1 text-xs" />
+          <div className="flex gap-2">
+            <button onClick={save} className="text-xs px-3 py-1 bg-emerald-700 rounded">Save</button>
+            <button onClick={() => setDraft(null)} className="text-xs px-3 py-1 bg-bg-600 rounded">Cancel</button>
+          </div>
+        </div>
+      )}
+      <button onClick={() => setDraft({ id: "", name: "" })} className="mt-4 text-xs px-3 py-1.5 bg-bg-700 rounded hover:bg-bg-600">+ Add profile</button>
+    </div>
+  );
+}
+
+function PrivacyTab() {
+  const [telemetry, setTelemetry] = useState(false);
+  useEffect(() => {
+    cmd.getMeta("telemetry_enabled").then((v) => setTelemetry(v === "1")).catch(() => {});
+  }, []);
+  async function toggleTelemetry(on: boolean) {
+    setTelemetry(on);
+    await cmd.setMeta("telemetry_enabled", on ? "1" : "0");
+  }
+  async function clearHist() {
+    if (!confirm("Clear all optimization history? This cannot be undone.")) return;
+    await cmd.clearHistory();
+    alert("History cleared.");
+  }
+  return (
+    <div>
+      <div className="flex items-center justify-between py-3 border-b border-bg-700">
+        <div>
+          <div className="text-sm text-gray-200">Anonymous telemetry</div>
+          <div className="text-xs text-gray-500">Off by default. Helps improve prompt scoring.</div>
+        </div>
+        <input type="checkbox" checked={telemetry} onChange={(e) => toggleTelemetry(e.target.checked)} />
+      </div>
+      <div className="py-3 border-b border-bg-700">
+        <button onClick={clearHist} className="text-xs px-3 py-1.5 bg-red-900/50 text-red-200 rounded hover:bg-red-900">Clear optimization history</button>
+      </div>
+      <div className="mt-4 text-xs text-gray-500">
+        API keys are stored only in the OS keychain — never in the database or logs.
+      </div>
     </div>
   );
 }
