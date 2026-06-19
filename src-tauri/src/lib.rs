@@ -73,6 +73,9 @@ pub fn run() {
             commands::get_meta,
             commands::set_meta,
             commands::clear_history,
+            commands::set_provider_key,
+            commands::get_onboarding_state,
+            commands::complete_onboarding,
         ])
         .setup(move |app| {
             // Resolve bundled resource dir (framework_packs shipped in the binary).

@@ -280,6 +280,17 @@ pub fn set_provider_enabled(db: State<'_, DbService>, id: String, enabled: bool)
     db.set_provider_enabled(&id, enabled).map_err(|e| ApiError::internal(e.to_string()))
 }
 
+/// Write/overwrite a provider's API key to the OS keychain.
+/// Blank key = clear.
+#[tauri::command]
+pub fn set_provider_key(id: String, key: String) -> Result<(), ApiError> {
+    if key.is_empty() {
+        crate::providers::keys::delete(&id).map_err(|e| ApiError::internal(e.to_string()))
+    } else {
+        crate::providers::keys::set(&id, &key).map_err(|e| ApiError::internal(e.to_string()))
+    }
+}
+
 // ─── Meta ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -295,6 +306,44 @@ pub fn set_meta(db: State<'_, DbService>, key: String, value: String) -> Result<
 #[tauri::command]
 pub fn clear_history(db: State<'_, DbService>) -> Result<(), ApiError> {
     db.clear_history().map_err(|e| ApiError::internal(e.to_string()))
+}
+
+// ─── Onboarding ───────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct OnboardingState {
+    pub completed: bool,
+    pub has_enabled_provider: bool,
+}
+
+#[tauri::command]
+pub fn get_onboarding_state(db: State<'_, DbService>) -> OnboardingState {
+    let completed = db.get_meta("onboarding_completed").as_deref() == Some("1");
+    let has_enabled = db
+        .list_providers()
+        .map(|ps| ps.iter().any(|p| p.enabled))
+        .unwrap_or(false);
+    OnboardingState { completed, has_enabled_provider: has_enabled }
+}
+
+#[tauri::command]
+pub fn complete_onboarding(
+    db: State<'_, DbService>,
+    provider_id: Option<String>,
+    model: Option<String>,
+    skipped: bool,
+) -> Result<(), ApiError> {
+    db.set_meta("onboarding_completed", "1").map_err(|e| ApiError::internal(e.to_string()))?;
+    if !skipped {
+        if let Some(pid) = provider_id {
+            db.set_meta("default_provider_id", &pid).map_err(|e| ApiError::internal(e.to_string()))?;
+            db.set_setting("default_provider_id", &pid).map_err(|e| ApiError::internal(e.to_string()))?;
+        }
+        if let Some(m) = model {
+            db.set_setting("default_model", &m).map_err(|e| ApiError::internal(e.to_string()))?;
+        }
+    }
+    Ok(())
 }
 
 // ─── Overlay ──────────────────────────────────────────────────────────────

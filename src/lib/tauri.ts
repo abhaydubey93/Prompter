@@ -48,6 +48,9 @@ export const cmd = {
   getMeta: (key: string) => invoke<string | null>("get_meta", { key }),
   setMeta: (key: string, value: string) => invoke<void>("set_meta", { key, value }),
   clearHistory: () => invoke<void>("clear_history", {}),
+  setProviderKey: (id: string, key: string) => invoke<void>("set_provider_key", { id, key }),
+  getOnboardingState: () => invoke<{ completed: boolean; has_enabled_provider: boolean }>("get_onboarding_state", {}),
+  completeOnboarding: (provider_id: string | null, model: string | null, skipped: boolean) => invoke<void>("complete_onboarding", { providerId: provider_id, model, skipped }),
 };
 
 // ─── Event helpers ───────────────────────────────────────────────────────

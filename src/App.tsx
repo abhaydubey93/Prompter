@@ -7,6 +7,7 @@ import {
 import {
   Settings as SettingsIcon, BookOpen, History, Zap, Trash2, Search, AlertTriangle,
 } from "lucide-react";
+import Onboarding from "./Onboarding";
 
 type Tab = "library" | "history" | "settings";
 
@@ -17,11 +18,23 @@ export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     loadLibrary();
     loadSettings();
+    checkOnboarding();
   }, []);
+
+  // First-run / no-provider gate: show wizard if not completed or no provider enabled.
+  async function checkOnboarding() {
+    try {
+      const st = await cmd.getOnboardingState();
+      if (!st.completed || !st.has_enabled_provider) {
+        setShowOnboarding(true);
+      }
+    } catch { /* ignore */ }
+  }
 
   // Listen for hotkey conflict errors (spec §11 GAP-7).
   useEffect(() => {
@@ -65,6 +78,9 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-bg-900 text-gray-200">
+      {/* ── Onboarding wizard (first-run / no provider) ──────────── */}
+      {showOnboarding && <Onboarding onClose={() => setShowOnboarding(false)} />}
+
       {/* ── Toast (hotkey conflict, spec §11 GAP-7) ─────────────── */}
       {toast && (
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 bg-red-900/90 border border-red-700 rounded-lg text-red-200 text-sm shadow-overlay">
