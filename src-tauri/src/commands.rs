@@ -159,6 +159,61 @@ pub fn list_frameworks(engine: State<'_, OptimizationEngine>) -> Result<Vec<serd
     Ok(out)
 }
 
+/// Import a custom framework pack (writes JSON to app-data dir, reloads engine).
+/// Refuses to overwrite a built-in by treating it as user data — actually
+/// we ALLOW override (built-ins are fallbacks) but the UI hides delete on built-ins.
+#[tauri::command]
+pub fn import_framework(
+    app: AppHandle,
+    engine: State<'_, OptimizationEngine>,
+    pack: crate::engine::FrameworkPack,
+) -> Result<(), ApiError> {
+    use tauri::Manager;
+    let app_data_dir = app.path().app_data_dir()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let packs_dir = app_data_dir.join("framework_packs");
+    std::fs::create_dir_all(&packs_dir).map_err(|e| ApiError::internal(e.to_string()))?;
+    let file = packs_dir.join(format!("{}.json", sanitize_id(&pack.id)));
+    let json = serde_json::to_string_pretty(&pack)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    std::fs::write(&file, json).map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let resource_dir = app.path().resource_dir().ok();
+    engine.reload(&app_data_dir, resource_dir.as_deref())
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(())
+}
+
+/// Delete a framework pack by id. Refuses built-in ids.
+#[tauri::command]
+pub fn delete_framework(
+    app: AppHandle,
+    engine: State<'_, OptimizationEngine>,
+    id: String,
+) -> Result<(), ApiError> {
+    use tauri::Manager;
+    if crate::engine::is_builtin(&id) {
+        return Err(ApiError::internal("cannot delete built-in framework"));
+    }
+    let app_data_dir = app.path().app_data_dir()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let file = app_data_dir.join("framework_packs").join(format!("{}.json", sanitize_id(&id)));
+    if file.exists() {
+        std::fs::remove_file(&file).map_err(|e| ApiError::internal(e.to_string()))?;
+    }
+    let resource_dir = app.path().resource_dir().ok();
+    engine.reload(&app_data_dir, resource_dir.as_deref())
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(())
+}
+
+/// Strip path separators / unsafe chars from an id before using as filename.
+fn sanitize_id(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect()
+}
+
 // ─── Overlay ──────────────────────────────────────────────────────────────
 
 #[tauri::command]

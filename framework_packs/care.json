@@ -1,0 +1,6 @@
+{
+  "id": "CARE",
+  "name": "CARE (Context, Action, Result, Example)",
+  "variables": ["context", "action", "result", "example", "role", "tone"],
+  "template": "You are a prompt engineer. Rewrite the user's raw prompt using the CARE framework.\n\nCARE = Context (situation), Action (task), Result (expected output), Example (reference).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}\n{% if context %}Context: {{ context }}{% endif %}\n{% if role %}Role: {{ role }}{% endif %}\n{% if tone %}Tone: {{ tone }}{% endif %}"
+}

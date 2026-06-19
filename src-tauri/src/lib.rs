@@ -43,7 +43,6 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(setup_db(&app_data_dir))
         .manage(setup_accessibility())
-        .manage(setup_engine(&app_data_dir))
         .manage(overlay::PriorFocus(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::capture_text,
@@ -63,8 +62,18 @@ pub fn run() {
             commands::show_overlay,
             commands::hide_overlay,
             commands::db_stats,
+            commands::import_framework,
+            commands::delete_framework,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            // Resolve bundled resource dir (framework_packs shipped in the binary).
+            let resource_dir = app.path().resource_dir().ok();
+
+            // Init engine with resource dir (post-builder, so paths are available).
+            let engine = OptimizationEngine::new(&app_data_dir, resource_dir.as_deref())
+                .expect("failed to init optimization engine");
+            app.manage(engine);
+
             // Register global hotkey.
             let handle = app.handle().clone();
             let settings = handle.state::<DbService>().get_settings().ok();
@@ -116,10 +125,6 @@ fn setup_db(app_data_dir: &std::path::Path) -> DbService {
 
 fn setup_accessibility() -> AccessibilityService {
     AccessibilityService::new().expect("failed to init accessibility service")
-}
-
-fn setup_engine(app_data_dir: &std::path::Path) -> OptimizationEngine {
-    OptimizationEngine::new(app_data_dir).expect("failed to init optimization engine")
 }
 
 /// Quick TCP-level liveness probe against the Ollama `/api/tags` endpoint.

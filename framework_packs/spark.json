@@ -1,0 +1,6 @@
+{
+  "id": "SPARK",
+  "name": "SPARK (Situation, Problem, Aspiration, Results, Knew)",
+  "variables": ["situation", "problem", "aspiration", "results", "knew", "context", "tone"],
+  "template": "You are a prompt engineer. Rewrite the user's raw prompt using the SPARK framework.\n\nSPARK = Situation (context), Problem (pain point), Aspiration (goal), Results (success metrics), Knew (constraints/known facts).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}\n{% if context %}Context: {{ context }}{% endif %}\n{% if tone %}Tone: {{ tone }}{% endif %}"
+}

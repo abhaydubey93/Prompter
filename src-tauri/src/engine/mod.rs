@@ -7,9 +7,10 @@
 
 mod frameworks;
 
-pub use frameworks::FrameworkPack;
+pub use frameworks::{is_builtin, read_dir_packs, FrameworkPack};
 
 use std::collections::HashMap;
+use std::sync::RwLock;
 
 use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter};
@@ -20,25 +21,43 @@ use crate::providers::{build, ProviderError};
 use crate::types::{ChatParams, ContextProfile, Message, OptimizeRequest, OptimizeResult};
 
 pub struct OptimizationEngine {
-    frameworks: HashMap<String, FrameworkPack>,
+    frameworks: RwLock<HashMap<String, FrameworkPack>>,
 }
 
 impl OptimizationEngine {
     /// Load framework packs and build the engine.
-    pub fn new(app_data_dir: &std::path::Path) -> anyhow::Result<Self> {
-        let frameworks = frameworks::load_all(app_data_dir)?;
+    /// `resource_dir` = bundled packs (post-build); None in tests.
+    pub fn new(
+        app_data_dir: &std::path::Path,
+        resource_dir: Option<&std::path::Path>,
+    ) -> anyhow::Result<Self> {
+        let frameworks = frameworks::load_all(app_data_dir, resource_dir)?;
         info!("{} framework(s) loaded", frameworks.len());
-        Ok(Self { frameworks })
+        Ok(Self { frameworks: RwLock::new(frameworks) })
     }
 
-    pub fn list_frameworks(&self) -> Vec<&FrameworkPack> {
-        let mut v: Vec<_> = self.frameworks.values().collect();
-        v.sort_by_key(|f| f.id.clone());
+    /// Reload packs from disk (used after import). Takes `&self` so it works
+    /// behind Tauri managed state.
+    pub fn reload(
+        &self,
+        app_data_dir: &std::path::Path,
+        resource_dir: Option<&std::path::Path>,
+    ) -> anyhow::Result<()> {
+        let frameworks = frameworks::load_all(app_data_dir, resource_dir)?;
+        info!("{} framework(s) after reload", frameworks.len());
+        *self.frameworks.write().unwrap() = frameworks;
+        Ok(())
+    }
+
+    pub fn list_frameworks(&self) -> Vec<FrameworkPack> {
+        let fw = self.frameworks.read().unwrap();
+        let mut v: Vec<_> = fw.values().cloned().collect();
+        v.sort_by(|a, b| a.id.cmp(&b.id));
         v
     }
 
-    pub fn get_framework(&self, id: &str) -> Option<&FrameworkPack> {
-        self.frameworks.get(id)
+    pub fn get_framework(&self, id: &str) -> Option<FrameworkPack> {
+        self.frameworks.read().unwrap().get(id).cloned()
     }
 
     /// Render the selected framework template with the raw prompt and
@@ -48,7 +67,10 @@ impl OptimizationEngine {
         req: &OptimizeRequest,
         ctx: Option<&ContextProfile>,
     ) -> anyhow::Result<String> {
-        let pack = self.frameworks.get(&req.framework)
+        let pack = {
+            let fw = self.frameworks.read().unwrap();
+            fw.get(&req.framework).cloned()
+        }
             .ok_or_else(|| anyhow::anyhow!("framework '{}' not found", req.framework))?;
 
         let mut env = minijinja::Environment::new();
