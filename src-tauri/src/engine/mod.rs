@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::info;
 
 use crate::db::DbService;
-use crate::providers::{build, ProviderError};
+use crate::providers::{build_adapter, ProviderError};
 use crate::types::{ChatParams, ContextProfile, Message, OptimizeRequest, OptimizeResult};
 
 pub struct OptimizationEngine {
@@ -98,12 +98,14 @@ impl OptimizationEngine {
     }
 
     /// Run the full optimization: render → stream → emit events → emit done.
+    /// `req.model` is in `provider_id:model_name` form. The provider config is
+    /// looked up from the DB; the model is stripped of the prefix.
     pub async fn optimize(
         &self,
         app: AppHandle,
         db: &DbService,
         req: OptimizeRequest,
-        ollama_url: &str,
+        _ollama_url: &str,
     ) -> Result<OptimizeResult, ProviderError> {
         let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -118,10 +120,21 @@ impl OptimizationEngine {
         let system_prompt = self.render_template(&req, ctx.as_ref())
             .map_err(|e| ProviderError::Parse(format!("template render: {e}")))?;
 
-        // Extract model name from selector ("ollama:llama3" → "llama3").
-        let model_name = req.model.split(':').nth(1)
-            .unwrap_or(&req.model)
-            .to_string();
+        // Split selector "provider_id:model_name".
+        let (provider_id, model_name) = match req.model.split_once(':') {
+            Some((p, m)) => (p.to_string(), m.to_string()),
+            None => (req.model.clone(), req.model.clone()),
+        };
+
+        // Resolve provider config from DB; error if missing/disabled.
+        let cfg = db.get_provider(&provider_id)
+            .map_err(|e| ProviderError::Unreachable(format!("provider lookup: {e}")))?
+            .ok_or_else(|| ProviderError::Unreachable(format!("unknown provider '{provider_id}'")))?;
+        if !cfg.enabled {
+            return Err(ProviderError::Unreachable(format!(
+                "provider '{}' is disabled", cfg.id
+            )));
+        }
 
         // Build messages.
         let messages = vec![
@@ -133,9 +146,8 @@ impl OptimizationEngine {
             ..Default::default()
         };
 
-        // Resolve provider adapter.
-        let adapter = build(&req.model, ollama_url)
-            .ok_or_else(|| ProviderError::Unreachable(format!("unknown provider in '{}'", req.model)))?;
+        // Resolve provider adapter from config + keychain.
+        let adapter = build_adapter(&cfg)?;
 
         // Stream chunks to the UI via Tauri events.
         let mut stream = adapter.stream_chat(messages, params).await?;

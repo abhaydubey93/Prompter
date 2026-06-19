@@ -36,9 +36,8 @@ pub async fn optimize_prompt(
     db: State<'_, DbService>,
     request: OptimizeRequest,
 ) -> Result<OptimizeResult, ApiError> {
-    let settings = db.get_settings().map_err(|e| ApiError::internal(e.to_string()))?;
     engine
-        .optimize(app, &db, request, &settings.ollama_url)
+        .optimize(app, &db, request, "")
         .await
         .map_err(|e| ApiError::provider_unreachable(e.to_string()))
 }
@@ -56,19 +55,59 @@ pub fn accept_replacement(
 
 // ─── Models ───────────────────────────────────────────────────────────────
 
+/// List models for a provider by id. Looks up the provider config in the DB,
+/// builds the adapter, queries its `list_models`. Used by overlay + onboarding.
 #[tauri::command]
 pub async fn get_models(
     db: State<'_, DbService>,
     provider: String,
 ) -> Result<Vec<ModelInfo>, ApiError> {
-    let settings = db.get_settings().map_err(|e| ApiError::internal(e.to_string()))?;
-    let selector = format!("{provider}:");
-    let adapter = crate::providers::build(&selector, &settings.ollama_url)
+    let cfg = db.get_provider(&provider)
+        .map_err(|e| ApiError::internal(e.to_string()))?
         .ok_or_else(|| ApiError::provider_unreachable(format!("unknown provider: {provider}")))?;
+    let adapter = crate::providers::build_adapter(&cfg)
+        .map_err(|e| ApiError::provider_unreachable(e.to_string()))?;
     adapter
         .list_models()
         .await
         .map_err(|e| ApiError::provider_unreachable(e.to_string()))
+}
+
+/// Health + model probe used by onboarding/Settings "Test connection".
+#[tauri::command]
+pub async fn test_provider(
+    db: State<'_, DbService>,
+    id: String,
+) -> Result<serde_json::Value, ApiError> {
+    let cfg = db.get_provider(&id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::provider_unreachable(format!("unknown provider: {id}")))?;
+    // Missing key for a key-required kind = unreachable with explanation.
+    let adapter = match crate::providers::build_adapter(&cfg) {
+        Ok(a) => a,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "alive": false,
+                "models": [],
+                "error": e.to_string(),
+            }));
+        }
+    };
+    let models = match adapter.list_models().await {
+        Ok(m) => m,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "alive": false,
+                "models": [],
+                "error": e.to_string(),
+            }));
+        }
+    };
+    Ok(serde_json::json!({
+        "alive": true,
+        "models": models,
+        "error": null,
+    }))
 }
 
 // ─── Prompt library ──────────────────────────────────────────────────────

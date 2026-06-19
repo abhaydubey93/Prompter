@@ -24,6 +24,7 @@ export const cmd = {
   optimizePrompt: (req: OptimizeRequest) => invoke<OptimizeResult>("optimize_prompt", { raw: req.raw, framework: req.framework, model: req.model, context_id: req.context_id }),
   acceptReplacement: (text: string) => invoke<ReplaceResult>("accept_replacement", { text }),
   getModels: (provider: string) => invoke<ModelInfo[]>("get_models", { provider }),
+  testProvider: (id: string) => invoke<{ alive: boolean; models: ModelInfo[]; error: string | null }>("test_provider", { id }),
   savePrompt: (p: Prompt) => invoke<string>("save_prompt", { prompt: p }),
   listPrompts: () => invoke<Prompt[]>("list_prompts", {}),
   searchPrompts: (q: string) => invoke<Prompt[]>("search_prompts", { query: q }),

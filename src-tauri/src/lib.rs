@@ -49,6 +49,7 @@ pub fn run() {
             commands::optimize_prompt,
             commands::accept_replacement,
             commands::get_models,
+            commands::test_provider,
             commands::save_prompt,
             commands::list_prompts,
             commands::search_prompts,
@@ -94,22 +95,28 @@ pub fn run() {
                 tracing::warn!("failed to register hotkey '{shortcut}': {e}");
             }
 
-            // Startup Ollama health check (spec §11 mitigation).
-            // Run async so we don't block setup; emits a status event the UI can use.
-            if let Some(ref s) = settings {
-                let ollama_url = s.ollama_url.clone();
+            // Startup provider health sweep (spec §11 mitigation).
+            // Probe every enabled provider; emit one provider_status event each.
+            // Used by the overlay's dead-provider banner and the onboarding gate.
+            {
+                let providers = handle.state::<DbService>().list_providers().unwrap_or_default();
                 let handle2 = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    let alive = ollama_health(&ollama_url).await;
-                    if alive {
-                        info!(%ollama_url, "ollama reachable at startup");
-                    } else {
-                        warn!(%ollama_url, "ollama NOT reachable at startup — provider will be marked unavailable");
+                    for cfg in providers.iter().filter(|p| p.enabled) {
+                        let alive = match providers::build_adapter(cfg) {
+                            Ok(a) => a.health_check().await,
+                            Err(_) => false, // missing key etc.
+                        };
+                        if alive {
+                            info!(provider = %cfg.id, "provider reachable at startup");
+                        } else {
+                            warn!(provider = %cfg.id, "provider NOT reachable at startup");
+                        }
+                        let _ = handle2.emit("provider_status", serde_json::json!({
+                            "provider": cfg.id,
+                            "alive": alive,
+                        }));
                     }
-                    let _ = handle2.emit("provider_status", serde_json::json!({
-                        "provider": "ollama",
-                        "alive": alive,
-                    }));
                 });
             }
 
@@ -133,14 +140,4 @@ fn setup_db(app_data_dir: &std::path::Path) -> DbService {
 
 fn setup_accessibility() -> AccessibilityService {
     AccessibilityService::new().expect("failed to init accessibility service")
-}
-
-/// Quick TCP-level liveness probe against the Ollama `/api/tags` endpoint.
-/// Used at startup so the UI can mark the provider dead (spec §11).
-async fn ollama_health(base_url: &str) -> bool {
-    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
-    match reqwest::Client::new().get(&url).send().await {
-        Ok(r) => r.status().is_success(),
-        Err(_) => false,
-    }
 }
