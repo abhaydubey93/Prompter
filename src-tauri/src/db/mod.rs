@@ -87,20 +87,38 @@ impl DbService {
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS providers (
+                id            TEXT PRIMARY KEY,
+                kind          TEXT NOT NULL,
+                label         TEXT NOT NULL,
+                base_url      TEXT NOT NULL,
+                api_key_slot  TEXT,
+                default_model TEXT NOT NULL DEFAULT '',
+                enabled       INTEGER NOT NULL DEFAULT 1,
+                sort_order    INTEGER NOT NULL DEFAULT 0,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             "#,
         )?;
         Self::seed_defaults(conn)?;
+        Self::seed_providers(conn)?;
         Ok(())
     }
 
     fn seed_defaults(conn: &Connection) -> anyhow::Result<()> {
         let defaults = Settings::default();
-        let pairs: [(&str, String); 5] = [
+        let pairs: [(&str, String); 7] = [
             ("hotkey", defaults.hotkey.clone()),
             ("theme", defaults.theme.clone()),
             ("default_framework", defaults.default_framework.clone()),
             ("default_model", defaults.default_model.clone()),
             ("ollama_url", defaults.ollama_url.clone()),
+            ("default_provider_id", defaults.default_provider_id.clone()),
+            ("overlay_opacity", defaults.overlay_opacity.to_string()),
         ];
         for (k, v) in pairs {
             conn.execute(
@@ -129,6 +147,8 @@ impl DbService {
             default_framework: read("default_framework"),
             default_model: read("default_model"),
             ollama_url: read("ollama_url"),
+            default_provider_id: read("default_provider_id"),
+            overlay_opacity: read("overlay_opacity").parse().unwrap_or(90),
         })
     }
 
@@ -319,6 +339,130 @@ impl DbService {
             .map_err(Into::into)
     }
 
+    // ---- providers ---------------------------------------------------------
+
+    fn seed_providers(conn: &Connection) -> anyhow::Result<()> {
+        // Only seed if table is empty (preserves user edits across upgrades).
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM providers", [], |r| r.get(0))
+            .unwrap_or(0);
+        if count > 0 {
+            return Ok(());
+        }
+
+        let defaults = [
+            ("ollama", "ollama", "Ollama (local)", "http://localhost:11434", None, "llama3", true, 0),
+            ("lmstudio", "openai_compat", "LM Studio (local)", "http://localhost:1234", None, "", true, 1),
+            ("openai", "openai_compat", "OpenAI", "https://api.openai.com/v1", Some("openai"), "gpt-4o", false, 10),
+            ("anthropic", "anthropic", "Anthropic", "https://api.anthropic.com", Some("anthropic"), "claude-sonnet-4-20250514", false, 11),
+            ("openrouter", "openai_compat", "OpenRouter", "https://openrouter.ai/api/v1", Some("openrouter"), "anthropic/claude-sonnet-4", false, 12),
+            ("nvidia_nim", "openai_compat", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", Some("nvidia_nim"), "", false, 13),
+            ("gemini", "gemini", "Google Gemini", "https://generativelanguage.googleapis.com", Some("gemini"), "gemini-2.0-flash", false, 14),
+        ];
+        for (id, kind, label, url, key_slot, model, enabled, order) in defaults {
+            conn.execute(
+                "INSERT OR IGNORE INTO providers(id, kind, label, base_url, api_key_slot, default_model, enabled, sort_order)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![id, kind, label, url, key_slot, model, enabled as i64, order],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn list_providers(&self) -> anyhow::Result<Vec<crate::types::ProviderConfig>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, label, base_url, api_key_slot, default_model, enabled, sort_order
+             FROM providers ORDER BY sort_order ASC, id ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(crate::types::ProviderConfig {
+                id: r.get(0)?,
+                kind: r.get(1)?,
+                label: r.get(2)?,
+                base_url: r.get(3)?,
+                api_key_slot: r.get(4)?,
+                default_model: r.get(5)?,
+                enabled: r.get::<_, i64>(6)? != 0,
+                sort_order: r.get(7)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    pub fn get_provider(&self, id: &str) -> anyhow::Result<Option<crate::types::ProviderConfig>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, label, base_url, api_key_slot, default_model, enabled, sort_order
+             FROM providers WHERE id=?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(r) => Ok(Some(crate::types::ProviderConfig {
+                id: r.get(0)?,
+                kind: r.get(1)?,
+                label: r.get(2)?,
+                base_url: r.get(3)?,
+                api_key_slot: r.get(4)?,
+                default_model: r.get(5)?,
+                enabled: r.get::<_, i64>(6)? != 0,
+                sort_order: r.get(7)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    pub fn save_provider(&self, p: &crate::types::ProviderConfig) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            r#"INSERT INTO providers(id, kind, label, base_url, api_key_slot, default_model, enabled, sort_order)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+               ON CONFLICT(id) DO UPDATE SET
+                 kind=excluded.kind, label=excluded.label, base_url=excluded.base_url,
+                 api_key_slot=excluded.api_key_slot, default_model=excluded.default_model,
+                 enabled=excluded.enabled, sort_order=excluded.sort_order"#,
+            params![p.id, p.kind, p.label, p.base_url, p.api_key_slot, p.default_model,
+                    p.enabled as i64, p.sort_order],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_provider(&self, id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM providers WHERE id=?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn set_provider_enabled(&self, id: &str, enabled: bool) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE providers SET enabled=?2 WHERE id=?1", params![id, enabled as i64])?;
+        Ok(())
+    }
+
+    // ---- meta -----------------------------------------------------------
+
+    pub fn get_meta(&self, key: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT value FROM meta WHERE key=?1", params![key], |r| r.get(0))
+            .ok()
+    }
+
+    pub fn set_meta(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_history(&self) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM history", [])?;
+        Ok(())
+    }
+
     /// Diagnostic helper — return row counts per table as a JSON string.
     pub fn stats(&self) -> serde_json::Value {
         let conn = self.conn.lock().unwrap();
@@ -331,6 +475,7 @@ impl DbService {
             "context_profiles": count("context_profiles"),
             "app_profiles": count("app_profiles"),
             "history": count("history"),
+            "providers": count("providers"),
         })
     }
 }
@@ -437,5 +582,80 @@ mod tests {
         let stats = db.stats();
         assert_eq!(stats["prompts"], 0);
         assert_eq!(stats["history"], 0);
+    }
+
+    #[test]
+    fn test_providers_seeded() {
+        let db = tmp_db();
+        let providers = db.list_providers().unwrap();
+        // Seed should insert 7 defaults.
+        assert_eq!(providers.len(), 7, "expected 7 seeded providers, got {}", providers.len());
+        let ollama = providers.iter().find(|p| p.id == "ollama").unwrap();
+        assert_eq!(ollama.kind, "ollama");
+        assert!(ollama.enabled);
+        // Cloud providers disabled until key set.
+        let openai = providers.iter().find(|p| p.id == "openai").unwrap();
+        assert!(!openai.enabled);
+    }
+
+    #[test]
+    fn test_provider_crud() {
+        let db = tmp_db();
+        // Save new custom provider.
+        let custom = crate::types::ProviderConfig {
+            id: "my_local".into(),
+            kind: "openai_compat".into(),
+            label: "My Local".into(),
+            base_url: "http://localhost:9999".into(),
+            api_key_slot: None,
+            default_model: "my-model".into(),
+            enabled: true,
+            sort_order: 50,
+        };
+        db.save_provider(&custom).unwrap();
+        let found = db.get_provider("my_local").unwrap().unwrap();
+        assert_eq!(found.label, "My Local");
+
+        // Update.
+        let updated = crate::types::ProviderConfig { label: "Updated".into(), ..custom.clone() };
+        db.save_provider(&updated).unwrap();
+        let loaded = db.list_providers().unwrap();
+        assert!(loaded.iter().any(|p| p.id == "my_local" && p.label == "Updated"));
+
+        // Delete.
+        db.delete_provider("my_local").unwrap();
+        assert!(db.get_provider("my_local").unwrap().is_none());
+
+        // Built-ins still there.
+        assert!(db.get_provider("ollama").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_set_provider_enabled() {
+        let db = tmp_db();
+        let p = db.get_provider("openai").unwrap().unwrap();
+        assert!(!p.enabled);
+        db.set_provider_enabled("openai", true).unwrap();
+        let p2 = db.get_provider("openai").unwrap().unwrap();
+        assert!(p2.enabled);
+    }
+
+    #[test]
+    fn test_meta_crud() {
+        let db = tmp_db();
+        assert_eq!(db.get_meta("nope"), None);
+        db.set_meta("onboarding_completed", "1").unwrap();
+        assert_eq!(db.get_meta("onboarding_completed"), Some("1".into()));
+        db.set_meta("onboarding_completed", "0").unwrap();
+        assert_eq!(db.get_meta("onboarding_completed"), Some("0".into()));
+    }
+
+    #[test]
+    fn test_clear_history() {
+        let db = tmp_db();
+        db.add_history("raw", "opt", "m", Some(50)).unwrap();
+        assert_eq!(db.list_history(10).unwrap().len(), 1);
+        db.clear_history().unwrap();
+        assert_eq!(db.list_history(10).unwrap().len(), 0);
     }
 }

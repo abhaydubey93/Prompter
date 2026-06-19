@@ -214,6 +214,50 @@ fn sanitize_id(id: &str) -> String {
         .collect()
 }
 
+// ─── Providers ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn list_providers(db: State<'_, DbService>) -> Result<Vec<crate::types::ProviderConfig>, ApiError> {
+    db.list_providers().map_err(|e| ApiError::internal(e.to_string()))
+}
+
+#[tauri::command]
+pub fn get_provider(db: State<'_, DbService>, id: String) -> Result<Option<crate::types::ProviderConfig>, ApiError> {
+    db.get_provider(&id).map_err(|e| ApiError::internal(e.to_string()))
+}
+
+#[tauri::command]
+pub fn save_provider(db: State<'_, DbService>, provider: crate::types::ProviderConfig) -> Result<(), ApiError> {
+    db.save_provider(&provider).map_err(|e| ApiError::internal(e.to_string()))
+}
+
+#[tauri::command]
+pub fn delete_provider(db: State<'_, DbService>, id: String) -> Result<(), ApiError> {
+    db.delete_provider(&id).map_err(|e| ApiError::internal(e.to_string()))
+}
+
+#[tauri::command]
+pub fn set_provider_enabled(db: State<'_, DbService>, id: String, enabled: bool) -> Result<(), ApiError> {
+    db.set_provider_enabled(&id, enabled).map_err(|e| ApiError::internal(e.to_string()))
+}
+
+// ─── Meta ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_meta(db: State<'_, DbService>, key: String) -> Option<String> {
+    db.get_meta(&key)
+}
+
+#[tauri::command]
+pub fn set_meta(db: State<'_, DbService>, key: String, value: String) -> Result<(), ApiError> {
+    db.set_meta(&key, &value).map_err(|e| ApiError::internal(e.to_string()))
+}
+
+#[tauri::command]
+pub fn clear_history(db: State<'_, DbService>) -> Result<(), ApiError> {
+    db.clear_history().map_err(|e| ApiError::internal(e.to_string()))
+}
+
 // ─── Overlay ──────────────────────────────────────────────────────────────
 
 #[tauri::command]

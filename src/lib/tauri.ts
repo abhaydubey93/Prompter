@@ -13,8 +13,9 @@ export interface ModelInfo { id: string; name: string }
 export interface Prompt { id: string; title: string; body: string; framework?: string; model_used?: string; score: number; usage_count: number; source_app?: string; created_at: string }
 export interface ContextProfile { id: string; name: string; role?: string; audience?: string; tone?: string; style_snippet?: string }
 export interface HistoryEntry { id: string; raw_prompt: string; optimized_prompt: string; model: string; score?: number; timestamp: string }
-export interface Settings { hotkey: string; theme: string; default_framework: string; default_model: string; ollama_url: string }
+export interface Settings { hotkey: string; theme: string; default_framework: string; default_model: string; ollama_url: string; default_provider_id?: string; overlay_opacity?: number }
 export interface FrameworkInfo { id: string; name: string }
+export interface ProviderConfig { id: string; kind: string; label: string; base_url: string; api_key_slot?: string; default_model: string; enabled: boolean; sort_order: number }
 
 // ─── Commands ─────────────────────────────────────────────────────────────
 
@@ -38,6 +39,14 @@ export const cmd = {
   showOverlay: (pos: Position) => invoke<void>("show_overlay", { pos }),
   hideOverlay: () => invoke<void>("hide_overlay", {}),
   dbStats: () => invoke<Record<string, number>>("db_stats", {}),
+  listProviders: () => invoke<ProviderConfig[]>("list_providers", {}),
+  getProvider: (id: string) => invoke<ProviderConfig | null>("get_provider", { id }),
+  saveProvider: (p: ProviderConfig) => invoke<void>("save_provider", { provider: p }),
+  deleteProvider: (id: string) => invoke<void>("delete_provider", { id }),
+  setProviderEnabled: (id: string, enabled: boolean) => invoke<void>("set_provider_enabled", { id, enabled }),
+  getMeta: (key: string) => invoke<string | null>("get_meta", { key }),
+  setMeta: (key: string, value: string) => invoke<void>("set_meta", { key, value }),
+  clearHistory: () => invoke<void>("clear_history", {}),
 };
 
 // ─── Event helpers ───────────────────────────────────────────────────────

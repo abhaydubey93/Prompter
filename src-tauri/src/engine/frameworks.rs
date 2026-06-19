@@ -93,27 +93,6 @@ pub fn load_all(
     Ok(frameworks)
 }
 
-/// Reload only from app-data dir (used after import). Does NOT include built-ins;
-/// caller merges as desired. Used by `import_framework` to validate.
-pub fn read_dir_packs(dir: &std::path::Path) -> anyhow::Result<Vec<FrameworkPack>> {
-    let mut out = Vec::new();
-    if !dir.exists() {
-        return Ok(out);
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().map_or(false, |e| e == "json") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(pack) = serde_json::from_str::<FrameworkPack>(&content) {
-                    out.push(pack);
-                }
-            }
-        }
-    }
-    Ok(out)
-}
-
 /// All 10 built-in framework packs (FR-E1).
 pub fn builtin_packs() -> Vec<FrameworkPack> {
     vec![
@@ -346,21 +325,6 @@ mod tests {
         let create = packs.get("CREATE").unwrap();
         assert_eq!(create.name, "CREATE Customized");
         assert!(create.template.contains("CUSTOM TEMPLATE"));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_read_dir_packs() {
-        let tmp = std::env::temp_dir().join("promptopt_fw_r3_readdir");
-        let _ = std::fs::remove_dir_all(&tmp);
-        let packs_dir = tmp.join("framework_packs");
-        std::fs::create_dir_all(&packs_dir).unwrap();
-        std::fs::write(
-            packs_dir.join("a.json"),
-            r#"{"id":"A","name":"A","variables":[],"template":"{{ raw_prompt }}"}"#,
-        ).unwrap();
-        let packs = read_dir_packs(&tmp).unwrap();
-        assert_eq!(packs.len(), 1);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

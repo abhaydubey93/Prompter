@@ -64,6 +64,14 @@ pub fn run() {
             commands::db_stats,
             commands::import_framework,
             commands::delete_framework,
+            commands::list_providers,
+            commands::get_provider,
+            commands::save_provider,
+            commands::delete_provider,
+            commands::set_provider_enabled,
+            commands::get_meta,
+            commands::set_meta,
+            commands::clear_history,
         ])
         .setup(move |app| {
             // Resolve bundled resource dir (framework_packs shipped in the binary).

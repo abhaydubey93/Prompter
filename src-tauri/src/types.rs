@@ -107,6 +107,10 @@ pub struct Settings {
     pub default_framework: String,
     pub default_model: String,
     pub ollama_url: String,
+    #[serde(default)]
+    pub default_provider_id: String,
+    #[serde(default)]
+    pub overlay_opacity: u8,
 }
 
 impl Default for Settings {
@@ -117,9 +121,30 @@ impl Default for Settings {
             default_framework: "CREATE".to_string(),
             default_model: "ollama:llama3".to_string(),
             ollama_url: "http://localhost:11434".to_string(),
+            default_provider_id: "ollama".to_string(),
+            overlay_opacity: 90,
         }
     }
 }
+
+/// A configured LLM provider, persisted in the `providers` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    pub id: String,
+    pub kind: String,            // "ollama" | "openai_compat" | "anthropic" | "gemini"
+    pub label: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key_slot: Option<String>, // None = no auth needed
+    #[serde(default)]
+    pub default_model: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub sort_order: i64,
+}
+
+fn default_true() -> bool { true }
 
 /// Screen/caret position reported by the accessibility layer.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -7,7 +7,7 @@
 
 mod frameworks;
 
-pub use frameworks::{is_builtin, read_dir_packs, FrameworkPack};
+pub use frameworks::{is_builtin, FrameworkPack};
 
 use std::collections::HashMap;
 use std::sync::RwLock;
