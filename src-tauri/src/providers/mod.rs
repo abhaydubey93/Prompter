@@ -16,8 +16,10 @@ use thiserror::Error;
 use crate::types::{ChatParams, Message, ModelInfo};
 
 /// A boxed async stream of text chunks (or errors).
-pub type ChunkStream =
+/// (Spec §3.1 names this type `ChatStream`; `ChunkStream` kept as alias.)
+pub type ChatStream =
     Pin<Box<dyn Stream<Item = Result<String, ProviderError>> + Send>>;
+pub type ChunkStream = ChatStream;
 
 #[derive(Debug, Error)]
 pub enum ProviderError {

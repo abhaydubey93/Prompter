@@ -58,11 +58,14 @@ impl OptimizationEngine {
         let mut vars = std::collections::HashMap::new();
         vars.insert("raw_prompt", req.raw.as_str());
         if let Some(c) = ctx {
+            // Spec §5 step 3: render with { raw_prompt, context_profile, role, audience, tone }.
+            vars.insert("context_profile", c.name.as_str());
             vars.insert("context", c.style_snippet.as_deref().unwrap_or(""));
             vars.insert("role", c.role.as_deref().unwrap_or(""));
             vars.insert("tone", c.tone.as_deref().unwrap_or(""));
             vars.insert("audience", c.audience.as_deref().unwrap_or(""));
         } else {
+            vars.insert("context_profile", "");
             vars.insert("context", "");
             vars.insert("role", "");
             vars.insert("tone", "");
