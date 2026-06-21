@@ -55,7 +55,8 @@ pub fn load_all(
                     }
                 };
                 match serde_json::from_str::<FrameworkPack>(&content) {
-                    Ok(pack) => {
+                    Ok(mut pack) => {
+                        pack.id = pack.id.to_uppercase();
                         info!(pack_id = %pack.id, source, "loaded framework pack");
                         frameworks.insert(pack.id.clone(), pack);
                     }
@@ -98,9 +99,9 @@ pub fn builtin_packs() -> Vec<FrameworkPack> {
     vec![
         FrameworkPack {
             id: "CREATE".into(),
-            name: "CREATE".into(),
+            name: "CREATE (Context, Request, Explanation, Action, Tone, Extras)".into(),
             variables: vec!["context".into(), "role".into(), "task".into(), "explanation".into(), "constraints".into(), "tone".into(), "extras".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the CREATE framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the CREATE framework.
 
 CREATE = Context, Request, Explanation, Action, Tone, Extras.
 Return ONLY the rewritten prompt.
@@ -116,7 +117,7 @@ Raw prompt:
             id: "APE".into(),
             name: "APE (Action, Purpose, Expectation)".into(),
             variables: vec!["action".into(), "purpose".into(), "expectation".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the APE framework (Action, Purpose, Expectation).
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the APE framework (Action, Purpose, Expectation).
 Return ONLY the rewritten prompt.
 
 Raw prompt:
@@ -127,7 +128,7 @@ Raw prompt:
             id: "TAG".into(),
             name: "TAG (Task, Action, Goal)".into(),
             variables: vec!["task".into(), "action".into(), "goal".into(), "context".into(), "role".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the TAG framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the TAG framework.
 
 TAG = Task (what to do), Action (how to do it), Goal (desired outcome).
 Return ONLY the rewritten prompt.
@@ -143,7 +144,7 @@ Raw prompt:
             id: "RACE".into(),
             name: "RACE (Role, Action, Context, Expectation)".into(),
             variables: vec!["role".into(), "action".into(), "context".into(), "expectation".into(), "audience".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the RACE framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the RACE framework.
 
 RACE = Role (who acts), Action (what to do), Context (background), Expectation (output format/quality).
 Return ONLY the rewritten prompt.
@@ -160,7 +161,7 @@ Raw prompt:
             id: "CARE".into(),
             name: "CARE (Context, Action, Result, Example)".into(),
             variables: vec!["context".into(), "action".into(), "result".into(), "example".into(), "role".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the CARE framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the CARE framework.
 
 CARE = Context (situation), Action (task), Result (expected output), Example (reference).
 Return ONLY the rewritten prompt.
@@ -176,7 +177,7 @@ Raw prompt:
             id: "RISE".into(),
             name: "RISE (Role, Instruction, Steps, End)".into(),
             variables: vec!["role".into(), "instruction".into(), "steps".into(), "end".into(), "context".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the RISE framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the RISE framework.
 
 RISE = Role (persona), Instruction (main task), Steps (sub-tasks), End (goal/output format).
 Return ONLY the rewritten prompt.
@@ -192,7 +193,7 @@ Raw prompt:
             id: "ERA".into(),
             name: "ERA (Expectation, Role, Action)".into(),
             variables: vec!["expectation".into(), "role".into(), "action".into(), "context".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the ERA framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the ERA framework.
 
 ERA = Expectation (desired result), Role (persona), Action (task steps).
 Return ONLY the rewritten prompt.
@@ -208,7 +209,7 @@ Raw prompt:
             id: "TRACE".into(),
             name: "TRACE (Task, Request, Action, Context, Example)".into(),
             variables: vec!["task".into(), "request".into(), "action".into(), "context".into(), "example".into(), "role".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the TRACE framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the TRACE framework.
 
 TRACE = Task (goal), Request (specific ask), Action (method), Context (background), Example (reference output).
 Return ONLY the rewritten prompt.
@@ -224,7 +225,7 @@ Raw prompt:
             id: "ROSES".into(),
             name: "ROSES (Role, Objective, Steps, End state, Style)".into(),
             variables: vec!["role".into(), "objective".into(), "steps".into(), "end_state".into(), "style".into(), "context".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the ROSES framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the ROSES framework.
 
 ROSES = Role (persona), Objective (goal), Steps (method), End state (success criteria), Style (tone/format).
 Return ONLY the rewritten prompt.
@@ -240,7 +241,7 @@ Raw prompt:
             id: "SPARK".into(),
             name: "SPARK (Situation, Problem, Aspiration, Results, Knew)".into(),
             variables: vec!["situation".into(), "problem".into(), "aspiration".into(), "results".into(), "knew".into(), "context".into(), "tone".into()],
-            template: r#"You are a prompt engineer. Rewrite the user's raw prompt using the SPARK framework.
+            template: r#"You are a prompt engineer. Rewrite the user's raw prompt in  detail using the SPARK framework.
 
 SPARK = Situation (context), Problem (pain point), Aspiration (goal), Results (success metrics), Knew (constraints/known facts).
 Return ONLY the rewritten prompt.
@@ -262,7 +263,9 @@ mod tests {
     fn test_ten_builtins_present() {
         let packs = builtin_packs();
         let ids: Vec<&str> = packs.iter().map(|p| p.id.as_str()).collect();
-        for expected in ["CREATE", "APE", "TAG", "RACE", "CARE", "RISE", "ERA", "TRACE", "ROSES", "SPARK"] {
+        for expected in [
+            "CREATE", "APE", "TAG", "RACE", "CARE", "RISE", "ERA", "TRACE", "ROSES", "SPARK",
+        ] {
             assert!(ids.contains(&expected), "missing built-in {expected}");
         }
         assert_eq!(packs.len(), 10, "expected exactly 10 built-ins");
@@ -271,8 +274,11 @@ mod tests {
     #[test]
     fn test_builtins_have_raw_prompt() {
         for pack in builtin_packs() {
-            assert!(pack.template.contains("{{ raw_prompt }}"),
-                "pack {} must reference raw_prompt", pack.id);
+            assert!(
+                pack.template.contains("{{ raw_prompt }}"),
+                "pack {} must reference raw_prompt",
+                pack.id
+            );
         }
     }
 
@@ -302,10 +308,14 @@ mod tests {
         std::fs::write(
             packs_dir.join("custom.json"),
             r#"{"id":"CUSTOM","name":"Custom","variables":[],"template":"{{ raw_prompt }}"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let packs = load_all(&tmp, None).unwrap();
         assert!(packs.contains_key("CUSTOM"), "user pack present");
-        assert!(packs.contains_key("CREATE"), "built-ins still merged underneath");
+        assert!(
+            packs.contains_key("CREATE"),
+            "built-ins still merged underneath"
+        );
         assert_eq!(packs.len(), 11, "10 built-ins + 1 custom");
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -338,7 +348,8 @@ mod tests {
         std::fs::write(
             packs_dir.join("good.json"),
             r#"{"id":"GOOD","name":"Good","variables":[],"template":"{{ raw_prompt }}"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let packs = load_all(&tmp, None).unwrap();
         assert!(packs.contains_key("GOOD"));
         assert!(!packs.contains_key("bad"));

@@ -1,11 +1,11 @@
-/** Overlay window root — renders the PromptOpt overlay UI. */
+/** Overlay window root — renders the Prompter overlay UI. */
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
   cmd, onOptChunk, onOptDone, onOptError, onOverlayShow, onProviderStatus,
-  type FrameworkInfo, type ModelInfo, type Settings,
+  type FrameworkInfo, type ModelInfo, type Settings, type ContextProfile,
 } from "../lib/tauri";
 import {
-  Sparkles, Check, Copy, RotateCcw,
+  Sparkles, Check, Copy, GitCompare,
   Loader2, AlertTriangle, X, BookOpen, Zap,
 } from "lucide-react";
 
@@ -13,6 +13,8 @@ export default function OverlayApp() {
   // ── State ────────────────────────────────────────────────────────────
   const [rawText, setRawText] = useState("");
   const [optimizedText, setOptimizedText] = useState("");
+  const optimizedRef = useRef("");
+  useEffect(() => { optimizedRef.current = optimizedText; }, [optimizedText]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [score, setScore] = useState<number | null>(null);
   const [diff, setDiff] = useState("");
@@ -22,33 +24,75 @@ export default function OverlayApp() {
   const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([]);
   const [selectedFramework, setSelectedFramework] = useState("CREATE");
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [selectedModel, setSelectedModel] = useState("ollama:llama3");
+  const [selectedModel, setSelectedModel] = useState("");
   const [_settings, setSettings] = useState<Settings | null>(null);
+  const [activeProviderId, setActiveProviderId] = useState("");
   const [providerAlive, setProviderAlive] = useState(true);
+  const [contexts, setContexts] = useState<ContextProfile[]>([]);
+  const [selectedContextId, setSelectedContextId] = useState("");
+  const [refineActive, setRefineActive] = useState(false);
+  const [refineNotes, setRefineNotes] = useState("");
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
 
   const sessionIdRef = useRef("");
   const rawRef = useRef<HTMLTextAreaElement>(null);
   const optRef = useRef<HTMLTextAreaElement>(null);
+  const refineInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setModelDropdownOpen(false);
+      }
+    };
+    if (modelDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modelDropdownOpen]);
+
+  useEffect(() => {
+    if (refineActive) {
+      refineInputRef.current?.focus();
+    }
+  }, [refineActive]);
+
+  const activeProviderIdRef = useRef(activeProviderId);
+  useEffect(() => {
+    activeProviderIdRef.current = activeProviderId;
+  }, [activeProviderId]);
 
   // ── Init ─────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
-        const [fw, st] = await Promise.all([cmd.listFrameworks(), cmd.getSettings()]);
+        // Pull text buffered at hotkey time FIRST — fixes emit/show race
+        // where overlay_show fired before this React listener registered.
+        const pending = await cmd.takePendingText();
+        if (pending) setRawText(pending);
+
+        const [fw, st, ctxs] = await Promise.all([cmd.listFrameworks(), cmd.getSettings(), cmd.listContexts()]);
         setFrameworks(fw);
         setSettings(st);
+        setContexts(ctxs);
         setSelectedFramework(st.default_framework);
         setSelectedModel(st.default_model);
 
-        // Load models for ollama.
+        // Load models for the default provider (or ollama fallback).
+        const providerId = st.default_provider_id || "ollama";
+        setActiveProviderId(providerId);
         try {
-          const ms = await cmd.getModels("ollama");
+          const ms = await cmd.getModels(providerId);
           setModels(ms);
-          if (ms.length > 0 && st.default_model === "ollama:llama3") {
-            setSelectedModel(`ollama:${ms[0].id}`);
+          // If no valid default_model, pick first from list.
+          const hasValid = st.default_model && st.default_model.startsWith(providerId + ":");
+          if (ms.length > 0 && !hasValid) {
+            setSelectedModel(`${providerId}:${ms[0].id}`);
           }
         } catch {
-          // Ollama not running — models stay empty.
+          // Provider unreachable — models stay empty.
         }
       } catch (e: any) {
         console.error("init error", e);
@@ -57,63 +101,124 @@ export default function OverlayApp() {
 
     // Listen for streaming events.
     type UnlistenFn = () => void;
-    const cleaners: UnlistenFn[] = [];
+    let cancelled = false;
+    let cleaners: UnlistenFn[] = [];
     const setup = async () => {
-      // Listen for overlay_show event from hotkey handler (spec §7).
-      // Falls back to capture_text IPC if no text received (spec §2 GAP-8).
-      cleaners.push(await onOverlayShow(async (ev) => {
-        // Reset state for new optimization session.
-        setOptimizedText("");
-        setScore(null);
-        setDiff("");
-        setDiffVisible(false);
-        setError(null);
-        setIsStreaming(false);
-        const text = ev.text || "";
-        if (text) {
-          setRawText(text);
-        } else {
-          // Fallback: capture directly via IPC (overlay opened without hotkey).
-          try {
-            const result = await cmd.captureText();
-            setRawText(result.text);
-          } catch {
-            setRawText("");
-          }
-        }
-      }));
+      try {
+        const [un0, un1, un2, un3, un4] = await Promise.all([
+          // overlay_show event from hotkey handler (spec §7).
+          onOverlayShow(async (ev) => {
+            setOptimizedText("");
+            setScore(null);
+            setDiff("");
+            setDiffVisible(false);
+            setError(null);
+            setIsStreaming(false);
 
-      cleaners.push(await onOptChunk((ev) => {
-        if (ev.session_id === sessionIdRef.current) {
-          setOptimizedText((prev) => prev + ev.text);
-        }
-      }));
-      cleaners.push(await onOptDone((ev) => {
-        if (ev.session_id === sessionIdRef.current) {
-          setScore(ev.score);
-          setDiff(ev.diff);
-          setIsStreaming(false);
-        }
-      }));
-      cleaners.push(await onOptError((ev) => {
-        if (ev.session_id === sessionIdRef.current) {
-          setError(ev.message);
-          setIsStreaming(false);
-        }
-      }));
+            // Re-fetch settings and contexts on show to apply changes.
+            try {
+              const [st, ctxs] = await Promise.all([cmd.getSettings(), cmd.listContexts()]);
+              setSettings(st);
+              setContexts(ctxs);
+              
+              const providerId = st.default_provider_id || "ollama";
+              setActiveProviderId(providerId);
+              
+              try {
+                const res = await cmd.testProvider(providerId);
+                setProviderAlive(res.alive);
+                if (res.alive) {
+                  setModels(res.models);
+                  const hasValid = st.default_model && st.default_model.startsWith(providerId + ":");
+                  if (res.models.length > 0 && !hasValid) {
+                    setSelectedModel(`${providerId}:${res.models[0].id}`);
+                  } else if (hasValid) {
+                    setSelectedModel(st.default_model);
+                  }
+                } else {
+                  setModels([]);
+                }
+              } catch (e) {
+                setProviderAlive(false);
+                setModels([]);
+              }
+            } catch (e) {
+              console.error("Failed to reload settings/contexts on show:", e);
+            }
 
-      // Provider health status from startup check (spec §11).
-      cleaners.push(await onProviderStatus((ev) => {
-        setProviderAlive(ev.alive);
-      }));
+            const text = ev.text || "";
+            if (text) {
+              setRawText(text);
+            } else {
+              try {
+                const result = await cmd.captureText();
+                setRawText(result.text);
+              } catch {
+                setRawText("");
+              }
+            }
+          }),
+          onOptChunk((ev) => {
+            setOptimizedText((prev) => prev + ev.text);
+          }),
+          onOptDone((ev) => {
+            setScore(ev.score);
+            setDiff(ev.diff);
+            setIsStreaming(false);
+          }),
+          onOptError((ev) => {
+            setError(ev.message);
+            setIsStreaming(false);
+          }),
+          // Provider health — only react to active provider.
+          onProviderStatus((ev) => {
+            if (ev.provider === activeProviderIdRef.current) setProviderAlive(ev.alive);
+          }),
+        ]);
+        if (cancelled) {
+          [un0, un1, un2, un3, un4].forEach((fn) => fn());
+          return;
+        }
+        cleaners = [un0, un1, un2, un3, un4];
+      } catch (e) {
+        console.error("Failed to setup listeners:", e);
+      }
     };
+
     setup();
 
-    return () => { cleaners.forEach((fn) => fn()); };
+    return () => {
+      cancelled = true;
+      cleaners.forEach((fn) => fn());
+    };
   }, []);
 
+  // Apply theme (WP-F): toggles data-theme attr on <html> for light/dark CSS.
+  useEffect(() => {
+    if (!_settings) return;
+
+    const updateTheme = () => {
+      let resolvedTheme = "dark";
+      if (_settings.theme === "light") {
+        resolvedTheme = "light";
+      } else if (_settings.theme === "system") {
+        resolvedTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolvedTheme);
+    };
+
+    updateTheme();
+
+    if (_settings.theme === "system") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handler = () => updateTheme();
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
+    }
+  }, [_settings?.theme]);
+
   // ── Actions ───────────────────────────────────────────────────────────
-  const handleOptimize = useCallback(async () => {
+  const handleOptimize = useCallback(async (notes?: string) => {
     if (!rawText.trim()) return;
     sessionIdRef.current = crypto.randomUUID();
     setOptimizedText("");
@@ -122,17 +227,46 @@ export default function OverlayApp() {
     setError(null);
     setIsStreaming(true);
 
+    const notesToUse = typeof notes === "string" ? notes : refineNotes;
+
+    let res;
     try {
-      await cmd.optimizePrompt({
+      res = await cmd.optimizePrompt({
         raw: rawText,
         framework: selectedFramework,
         model: selectedModel,
+        context_id: selectedContextId || undefined,
+        refinement_notes: notesToUse || undefined,
       });
     } catch (e: any) {
       setError(String(e));
+    } finally {
+      // opt_done normally clears isStreaming, but emit/show races can drop it.
+      // Ensure the button always unblocks.
       setIsStreaming(false);
     }
-  }, [rawText, selectedFramework, selectedModel]);
+
+    // Safety net: if opt_done event was missed (StrictMode re-subscribe race,
+    // window not yet listening, etc.), apply the result directly.
+    if (res && res.optimized && !optimizedRef.current.trim()) {
+      setOptimizedText(res.optimized);
+      setScore(res.score);
+      setDiff(res.diff);
+    }
+  }, [rawText, selectedFramework, selectedModel, selectedContextId, refineNotes]);
+
+  const handleSubmitRefine = useCallback(async () => {
+    if (!refineNotes.trim()) return;
+    await handleOptimize(refineNotes);
+    setRefineActive(false);
+  }, [refineNotes, handleOptimize]);
+
+  const handleRefineKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && refineNotes.trim()) {
+      e.preventDefault();
+      handleSubmitRefine();
+    }
+  }, [refineNotes, handleSubmitRefine]);
 
   const handleAccept = useCallback(async () => {
     if (!optimizedText.trim()) return;
@@ -177,17 +311,44 @@ export default function OverlayApp() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.preventDefault();
         cmd.hideOverlay().catch(() => {});
       }
-      // Enter = Accept (spec §7)
-      if (e.key === "Enter" && optimizedText.trim() && !isStreaming) {
+
+      // Ctrl+R = Toggle/open Refine input
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        if (optimizedText.trim() && !isStreaming) {
+          setRefineActive((a) => !a);
+        }
+      }
+
+      // Ctrl+M = Focus Model dropdown
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        setModelDropdownOpen(true);
+      }
+
+      // Ctrl+S = Save to library
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (optimizedText.trim() && !isStreaming) {
+          handleSave();
+        }
+      }
+
+      // Enter = Accept (spec §7) — but only when NOT focused on a text input
+      // or textarea, so users can type newlines with Shift+Enter there.
+      const el = document.activeElement;
+      const inTextField = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+      if (e.key === "Enter" && !e.shiftKey && !inTextField && optimizedText.trim() && !isStreaming) {
         e.preventDefault();
         handleAccept();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [optimizedText, isStreaming, handleAccept]);
+  }, [optimizedText, isStreaming, handleAccept, handleSave]);
 
   // ── Score color ───────────────────────────────────────────────────────
   const scoreColor = score == null ? "text-gray-500"
@@ -197,30 +358,76 @@ export default function OverlayApp() {
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-screen bg-bg-900 text-gray-200 select-none"
-      data-tauri-drag-region
+    <div
+      className="flex flex-col h-screen bg-bg-900 text-gray-200 select-none"
+      style={{ opacity: _settings?.overlay_opacity ? _settings.overlay_opacity / 100 : 0.9 }}
     >
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-bg-600 gap-2 shrink-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-bg-600 gap-2 shrink-0"
+        data-tauri-drag-region
+      >
         <div className="flex items-center gap-2 text-sm">
           <Zap size={14} className="text-accent" />
           <select
             value={selectedFramework}
             onChange={(e) => setSelectedFramework(e.target.value)}
-            className="bg-bg-700 text-xs px-2 py-1 rounded border border-bg-600 focus:outline-none focus:border-accent"
+            className="bg-bg-700 text-xs px-2 py-1 rounded border border-bg-600 focus:outline-none focus:border-accent min-w-[100px]"
           >
             {frameworks.map((f) => (
               <option key={f.id} value={f.id}>{f.name}</option>
             ))}
           </select>
+          <div className="relative flex-1 min-w-[120px]" ref={dropdownRef}>
+            <button
+              onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
+              className="w-full text-left bg-bg-700 text-xs px-2 py-1 rounded border border-bg-600 focus:outline-none focus:border-accent truncate"
+            >
+              {models.find(m => `${activeProviderId || "ollama"}:${m.id}` === selectedModel)?.name || selectedModel || "no models"}
+            </button>
+            {modelDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 w-full max-h-60 bg-bg-800 border border-bg-600 rounded shadow-lg z-50 flex flex-col">
+                <div className="p-1 border-b border-bg-600">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Search model..."
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    className="w-full bg-bg-950 text-xs px-2 py-1 rounded border border-bg-600 focus:outline-none focus:border-accent"
+                  />
+                </div>
+                <div className="overflow-y-auto flex-1">
+                  {models.filter(m => m.name.toLowerCase().includes(modelSearch.toLowerCase()) || m.id.toLowerCase().includes(modelSearch.toLowerCase())).map(m => {
+                    const val = `${activeProviderId || "ollama"}:${m.id}`;
+                    return (
+                      <button
+                        key={m.id}
+                        className={`w-full text-left px-2 py-1 text-xs hover:bg-bg-700 ${val === selectedModel ? 'bg-accent/20 text-accent' : ''} truncate`}
+                        onClick={() => {
+                          setSelectedModel(val);
+                          setModelDropdownOpen(false);
+                          setModelSearch("");
+                        }}
+                      >
+                        {m.name}
+                      </button>
+                    );
+                  })}
+                  {models.filter(m => m.name.toLowerCase().includes(modelSearch.toLowerCase()) || m.id.toLowerCase().includes(modelSearch.toLowerCase())).length === 0 && (
+                    <div className="px-2 py-1 text-xs text-gray-500">No results</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            className="bg-bg-700 text-xs px-2 py-1 rounded border border-bg-600 focus:outline-none focus:border-accent w-40"
+            value={selectedContextId}
+            onChange={(e) => setSelectedContextId(e.target.value)}
+            className="bg-bg-700 text-xs px-2 py-1 rounded border border-bg-600 focus:outline-none focus:border-accent w-36"
           >
-            <option value="ollama:llama3">ollama:llama3</option>
-            {models.map((m) => (
-              <option key={m.id} value={`ollama:${m.id}`}>{m.name}</option>
+            <option value="">No Context Profile</option>
+            {contexts.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </div>
@@ -250,24 +457,31 @@ export default function OverlayApp() {
         <div className="w-1/2 flex flex-col">
           <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-gray-500 px-2 py-1 border-b border-bg-600 shrink-0">
             <span>Optimized</span>
-            {score != null && (
-              <span className={`font-bold text-xs ${scoreColor}`}>
-                {score}/100
-              </span>
-            )}
+            <div className="flex gap-2">
+              {score != null && (
+                <span className={`font-bold text-xs ${scoreColor}`}>
+                  Score: {score}
+                </span>
+              )}
+              {optimizedText.length > 0 && (
+                <span className="text-gray-400">
+                  {optimizedText.length} chars
+                </span>
+              )}
+            </div>
           </div>
           {diffVisible ? (
             <pre className="flex-1 p-2 text-xs overflow-auto font-mono leading-relaxed whitespace-pre-wrap">
               {diff.split("\n").map((line, i) => {
-                if (line.startsWith("+")) return <span key={i} className="diff-add">{line}\n</span>;
-                if (line.startsWith("-")) return <span key={i} className="diff-del">{line}\n</span>;
-                return <span key={i}>{line}\n</span>;
+                if (line.startsWith("+")) return <span key={i} className="diff-add">{line}{"\n"}</span>;
+                if (line.startsWith("-")) return <span key={i} className="diff-del">{line}{"\n"}</span>;
+                return <span key={i}>{line}{"\n"}</span>;
               })}
             </pre>
           ) : (
             <textarea
               ref={optRef}
-              value={isStreaming ? undefined : optimizedText}
+              value={optimizedText}
               readOnly={isStreaming}
               className="flex-1 bg-transparent p-2 text-sm resize-none focus:outline-none font-mono"
               placeholder={isStreaming ? "Streaming…" : "Optimized text will appear here"}
@@ -281,7 +495,7 @@ export default function OverlayApp() {
       {!providerAlive && (
         <div className="flex items-center gap-2 px-3 py-2 bg-yellow-900/30 border-t border-yellow-800/40 text-yellow-300 text-xs shrink-0">
           <AlertTriangle size={14} />
-          <span className="flex-1">Ollama not reachable — optimization will fail.</span>
+          <span className="flex-1">{activeProviderId || "Provider"} not reachable — optimization will fail.</span>
         </div>
       )}
 
@@ -294,17 +508,53 @@ export default function OverlayApp() {
         </div>
       )}
 
+      {/* ── Refinement Input Row ────────────────────────────────────── */}
+      {refineActive && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-bg-800 border-t border-bg-600 shrink-0">
+          <input
+            ref={refineInputRef}
+            type="text"
+            value={refineNotes}
+            onChange={(e) => setRefineNotes(e.target.value)}
+            onKeyDown={handleRefineKeyDown}
+            placeholder="Ask to refine (e.g., 'make it formal', 'add Python code')..."
+            className="flex-1 bg-bg-950 border border-bg-600 rounded px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-accent font-sans"
+          />
+          <button
+            onClick={handleSubmitRefine}
+            disabled={isStreaming || !refineNotes.trim()}
+            className="px-3 py-1.5 bg-accent hover:bg-accent/80 text-white rounded text-xs font-medium transition"
+          >
+            Submit
+          </button>
+        </div>
+      )}
+
       {/* ── Footer (actions) ───────────────────────────────────────── */}
       <div className="flex items-center justify-between px-3 py-2 border-t border-bg-600 gap-2 shrink-0">
         <div className="flex gap-1.5">
           <button
-            onClick={handleOptimize}
+            onClick={() => handleOptimize()}
             disabled={isStreaming || !rawText.trim()}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-accent hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed text-white transition"
           >
             {isStreaming ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
             {isStreaming ? "Optimizing…" : "Optimize"}
           </button>
+          {optimizedText.trim() && (
+            <button
+              onClick={() => setRefineActive((a) => !a)}
+              disabled={isStreaming}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border transition ${
+                refineActive
+                  ? "bg-bg-600 border-accent text-accent hover:bg-bg-500"
+                  : "bg-bg-700 border-bg-600 text-gray-200 hover:bg-bg-600"
+              }`}
+              title="Refine optimized prompt (Ctrl+R)"
+            >
+              Refine
+            </button>
+          )}
           <button
             onClick={handleAccept}
             disabled={!optimizedText.trim() || isStreaming}
@@ -321,7 +571,7 @@ export default function OverlayApp() {
                 className="p-1.5 text-gray-400 hover:text-gray-200 rounded hover:bg-bg-600 transition"
                 title="Toggle diff view"
               >
-                <RotateCcw size={14} />
+                <GitCompare size={14} />
               </button>
               <button
                 onClick={handleSave}

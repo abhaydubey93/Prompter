@@ -2,5 +2,5 @@
   "id": "ERA",
   "name": "ERA (Expectation, Role, Action)",
   "variables": ["expectation", "role", "action", "context", "tone"],
-  "template": "You are a prompt engineer. Rewrite the user's raw prompt using the ERA framework.\n\nERA = Expectation (desired result), Role (persona), Action (task steps).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}\n{% if role %}Role: {{ role }}{% endif %}\n{% if context %}Context: {{ context }}{% endif %}\n{% if tone %}Tone: {{ tone }}{% endif %}"
+  "template": "You are a prompt engineer. Rewrite the user's raw prompt in  detail using the ERA framework.\n\nERA = Expectation (desired result), Role (persona), Action (task steps).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}\n{% if role %}Role: {{ role }}{% endif %}\n{% if context %}Context: {{ context }}{% endif %}\n{% if tone %}Tone: {{ tone }}{% endif %}"
 }

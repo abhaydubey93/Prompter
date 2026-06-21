@@ -1,4 +1,4 @@
-//! PromptOpt — Local-first prompt optimization overlay.
+//! Prompter — Local-first prompt optimization overlay.
 //!
 //! Entry point called from `main.rs`. Initializes all services, registers
 //! Tauri plugins and IPC commands, and starts the event loop.
@@ -14,6 +14,8 @@ pub mod replacement;
 pub mod types;
 
 use tauri::{Emitter, Manager};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -25,16 +27,27 @@ use engine::OptimizationEngine;
 pub fn run() {
     // Logging.
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("promptopt=debug".parse().unwrap()))
+        .with_env_filter(EnvFilter::from_default_env().add_directive("prompter=debug".parse().unwrap()))
         .with_target(false)
         .init();
 
-    info!("PromptOpt starting");
+    info!("Prompter starting");
 
     // Pre-compute the app data dir (before Tauri Builder, which may need it).
     let app_data_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("Prompter");
+
+    let old_data_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("PromptOpt");
+
+    if old_data_dir.exists() && !app_data_dir.exists() {
+        info!("Migrating data directory from PromptOpt to Prompter...");
+        if let Err(e) = std::fs::rename(&old_data_dir, &app_data_dir) {
+            warn!("Failed to migrate data directory: {}", e);
+        }
+    }
 
     // ─── Build ────────────────────────────────────────────────────────────
     tauri::Builder::default()
@@ -44,6 +57,7 @@ pub fn run() {
         .manage(setup_db(&app_data_dir))
         .manage(setup_accessibility())
         .manage(overlay::PriorFocus(std::sync::Mutex::new(None)))
+        .manage(overlay::PendingText(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::capture_text,
             commands::optimize_prompt,
@@ -54,14 +68,17 @@ pub fn run() {
             commands::list_prompts,
             commands::search_prompts,
             commands::delete_prompt,
+            commands::bump_usage,
             commands::save_context,
             commands::list_contexts,
+            commands::delete_context,
             commands::list_history,
             commands::get_settings,
             commands::set_setting,
             commands::list_frameworks,
             commands::show_overlay,
             commands::hide_overlay,
+            commands::take_pending_text,
             commands::db_stats,
             commands::import_framework,
             commands::delete_framework,
@@ -78,6 +95,30 @@ pub fn run() {
             commands::complete_onboarding,
         ])
         .setup(move |app| {
+            // Setup Tray Icon
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Open Settings", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            if let Some(icon) = app.default_window_icon() {
+                TrayIconBuilder::new()
+                    .icon(icon.clone())
+                    .menu(&menu)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {}
+                    })
+                    .build(app)?;
+            }
+
             // Resolve bundled resource dir (framework_packs shipped in the binary).
             let resource_dir = app.path().resource_dir().ok();
 
@@ -128,11 +169,11 @@ pub fn run() {
                 let _ = overlay.hide();
             }
 
-            info!("PromptOpt ready (hotkey: {shortcut})");
+            info!("Prompter ready (hotkey: {shortcut})");
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running PromptOpt");
+        .expect("error while running Prompter");
 }
 
 fn setup_db(app_data_dir: &std::path::Path) -> DbService {

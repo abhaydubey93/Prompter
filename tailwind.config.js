@@ -1,11 +1,12 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
-  darkMode: "class",
+  darkMode: ["selector", '[data-theme="dark"]'],
   theme: {
     extend: {
       colors: {
         bg: {
+          950: "#06080c",
           900: "#0b0d12",
           800: "#11141b",
           700: "#171b24",

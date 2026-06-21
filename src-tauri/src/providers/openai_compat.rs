@@ -143,10 +143,9 @@ impl LLMAdapter for OpenAiCompatAdapter {
                                         return;
                                     }
                                 }
-                                Err(e) => {
-                                    yield Err(ProviderError::Parse(format!(
-                                        "bad SSE line: {e}: {payload}"
-                                    )));
+                                Err(_) => {
+                                    // Skip non-JSON keep-alive / heartbeat lines.
+                                    continue;
                                 }
                             }
                         }

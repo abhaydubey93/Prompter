@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PromptOpt",
+  "productName": "Prompter",
   "version": "0.1.0",
-  "identifier": "com.promptopt.overlay",
+  "identifier": "com.prompter.overlay",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "PromptOpt",
+        "title": "Prompter",
         "width": 1000,
         "height": 720,
         "resizable": true,
@@ -21,9 +21,9 @@
       },
       {
         "label": "overlay",
-        "title": "PromptOpt Overlay",
-        "width": 400,
-        "height": 340,
+        "title": "Prompter Overlay",
+        "width": 560,
+        "height": 420,
         "resizable": true,
         "decorations": false,
         "alwaysOnTop": true,

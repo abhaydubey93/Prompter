@@ -29,3 +29,10 @@ src-tauri/target/
 src-tauri/gen/
 Cargo.lock
 
+# Accidental device files
+nul
+
+# Markdown files
+*.md
+!README.md
+!documentation.md

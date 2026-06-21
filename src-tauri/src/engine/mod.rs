@@ -109,6 +109,18 @@ impl OptimizationEngine {
     ) -> Result<OptimizeResult, ProviderError> {
         let session_id = uuid::Uuid::new_v4().to_string();
 
+        /// Emit opt_error then return Err — ensures UI always gets notified.
+        macro_rules! fail {
+            ($code:expr, $msg:expr) => {{
+                let _ = app.emit("opt_error", serde_json::json!({
+                    "code": $code,
+                    "message": $msg,
+                    "session_id": &session_id,
+                }));
+                return Err(ProviderError::Unreachable($msg));
+            }};
+        }
+
         // Load context profile if provided.
         let ctx = if let Some(ref cid) = req.context_id {
             db.get_context(cid).ok().flatten()
@@ -131,15 +143,24 @@ impl OptimizationEngine {
             .map_err(|e| ProviderError::Unreachable(format!("provider lookup: {e}")))?
             .ok_or_else(|| ProviderError::Unreachable(format!("unknown provider '{provider_id}'")))?;
         if !cfg.enabled {
-            return Err(ProviderError::Unreachable(format!(
-                "provider '{}' is disabled", cfg.id
-            )));
+            fail!("PROVIDER_DISABLED", format!("provider '{}' is disabled — enable it in Settings → Providers", cfg.id));
         }
+
+        // If refinement notes are provided, combine them with the raw user prompt.
+        let user_content = if let Some(ref notes) = req.refinement_notes {
+            if !notes.is_empty() {
+                format!("Raw prompt:\n{}\n\nRefinement feedback:\n{}", req.raw, notes)
+            } else {
+                req.raw.clone()
+            }
+        } else {
+            req.raw.clone()
+        };
 
         // Build messages.
         let messages = vec![
             Message::system(&system_prompt),
-            Message::user(&req.raw),
+            Message::user(&user_content),
         ];
         let params = ChatParams {
             model: model_name.clone(),
@@ -150,7 +171,12 @@ impl OptimizationEngine {
         let adapter = build_adapter(&cfg)?;
 
         // Stream chunks to the UI via Tauri events.
-        let mut stream = adapter.stream_chat(messages, params).await?;
+        let mut stream = match adapter.stream_chat(messages, params).await {
+            Ok(s) => s,
+            Err(e) => {
+                fail!("STREAM_ERROR", e.to_string());
+            }
+        };
 
         let mut optimized = String::new();
         while let Some(chunk) = stream.next().await {
@@ -187,7 +213,7 @@ impl OptimizationEngine {
 
         let result = OptimizeResult {
             optimized: optimized.clone(),
-            score,
+            score: score as i64,
             diff,
             tokens,
             session_id: session_id.clone(),

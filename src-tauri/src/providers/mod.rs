@@ -63,16 +63,24 @@ pub trait LLMAdapter: Send + Sync {
 /// Construct the concrete adapter for a `ProviderConfig`. Reads the API key
 /// from the OS keychain when `api_key_slot` is set.
 pub fn build_adapter(cfg: &ProviderConfig) -> Result<Box<dyn LLMAdapter>, ProviderError> {
-    let api_key = cfg
-        .api_key_slot
-        .as_deref()
-        .and_then(|_| keys::get(&cfg.id));
+    let api_key = if cfg.api_key_slot.is_some() {
+        keys::get(&cfg.id)
+    } else {
+        None
+    };
     match cfg.kind.as_str() {
         "ollama" => Ok(Box::new(ollama::OllamaAdapter::new(&cfg.base_url))),
-        "openai_compat" => Ok(Box::new(openai_compat::OpenAiCompatAdapter::new(
-            &cfg.base_url,
-            api_key,
-        ))),
+        "openai_compat" => {
+            // Cloud providers (OpenRouter, OpenAI, NIM) need a key.
+            // Local ones (LM Studio, llama.cpp) set api_key_slot = None.
+            if cfg.api_key_slot.is_some() {
+                let key = api_key
+                    .ok_or_else(|| ProviderError::MissingKey(cfg.id.clone()))?;
+                Ok(Box::new(openai_compat::OpenAiCompatAdapter::new(&cfg.base_url, Some(key))))
+            } else {
+                Ok(Box::new(openai_compat::OpenAiCompatAdapter::new(&cfg.base_url, None)))
+            }
+        }
         "anthropic" => {
             let key = api_key.ok_or_else(|| ProviderError::MissingKey(cfg.id.clone()))?;
             Ok(Box::new(anthropic::AnthropicAdapter::new(&cfg.base_url, key)))

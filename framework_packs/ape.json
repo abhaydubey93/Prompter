@@ -2,5 +2,5 @@
   "id": "APE",
   "name": "APE (Action, Purpose, Expectation)",
   "variables": ["action","purpose","expectation"],
-  "template": "You are a prompt engineer. Rewrite the user's raw prompt using the APE framework (Action, Purpose, Expectation).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}"
+  "template": "You are a prompt engineer. Rewrite the user's raw prompt in  detail using the APE framework (Action, Purpose, Expectation).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}"
 }

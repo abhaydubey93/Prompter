@@ -188,7 +188,7 @@ through to clipboard path automatically.
   "id": "CREATE",
   "name": "CREATE",
   "variables": ["context","role","task","explanation","constraints","tone","extras"],
-  "template": "You are a prompt engineer. Rewrite the user's raw prompt using the CREATE framework.\n\nCREATE = Context, Request, Explanation, Action, Tone, Extras.\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}\n{% if context %}Context: {{ context }}{% endif %}\n{% if tone %}Tone: {{ tone }}{% endif %}"
+  "template": "You are a prompt engineer. Rewrite the user's raw prompt in  detail using the CREATE framework.\n\nCREATE = Context, Request, Explanation, Action, Tone, Extras.\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}\n{% if context %}Context: {{ context }}{% endif %}\n{% if tone %}Tone: {{ tone }}{% endif %}"
 }
 ```
 
@@ -198,7 +198,7 @@ through to clipboard path automatically.
   "id": "APE",
   "name": "APE (Action, Purpose, Expectation)",
   "variables": ["action","purpose","expectation"],
-  "template": "You are a prompt engineer. Rewrite the user's raw prompt using the APE framework (Action, Purpose, Expectation).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}"
+  "template": "You are a prompt engineer. Rewrite the user's raw prompt in  detail using the APE framework (Action, Purpose, Expectation).\nReturn ONLY the rewritten prompt.\n\nRaw prompt:\n{{ raw_prompt }}"
 }
 ```
 

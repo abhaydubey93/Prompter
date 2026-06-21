@@ -3,7 +3,7 @@
 //! See `design_docs/05_API_Design.md` §2 for the command catalogue.
 //! Each command is `#[tauri::command]` and takes Tauri managed state via params.
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, Manager};
 
 use crate::accessibility::{AccessibilityService, IAccessibilityService};
 use crate::db::DbService;
@@ -50,6 +50,13 @@ pub fn accept_replacement(
     access: State<'_, AccessibilityService>,
     text: String,
 ) -> Result<ReplaceResult, ApiError> {
+    if let Some(prior) = app.try_state::<overlay::PriorFocus>() {
+        let hwnd_opt = *prior.0.lock().unwrap();
+        if let Some(hwnd) = hwnd_opt {
+            overlay::set_foreground_window(hwnd);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
     Ok(ReplacementService::replace(&app, &access, &text))
 }
 
@@ -134,6 +141,11 @@ pub fn delete_prompt(db: State<'_, DbService>, id: String) -> Result<(), ApiErro
     db.delete_prompt(&id).map_err(|e| ApiError::internal(e.to_string()))
 }
 
+#[tauri::command]
+pub fn bump_usage(db: State<'_, DbService>, id: String) -> Result<(), ApiError> {
+    db.increment_usage(&id).map_err(|e| ApiError::internal(e.to_string()))
+}
+
 // ─── Context profiles ─────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -144,6 +156,11 @@ pub fn save_context(db: State<'_, DbService>, profile: ContextProfile) -> Result
 #[tauri::command]
 pub fn list_contexts(db: State<'_, DbService>) -> Result<Vec<ContextProfile>, ApiError> {
     db.list_contexts().map_err(|e| ApiError::internal(e.to_string()))
+}
+
+#[tauri::command]
+pub fn delete_context(db: State<'_, DbService>, id: String) -> Result<(), ApiError> {
+    db.delete_context(&id).map_err(|e| ApiError::internal(e.to_string()))
 }
 
 // ─── History ──────────────────────────────────────────────────────────────
@@ -170,8 +187,14 @@ pub fn set_setting(app: AppHandle, db: State<'_, DbService>, key: String, value:
         let old = db.get_settings().map(|s| s.hotkey).unwrap_or_default();
         db.set_setting(&key, &value).map_err(|e| ApiError::internal(e.to_string()))?;
         // Unregister old shortcut.
-        if let Ok(shortcut) = old.parse::<tauri_plugin_global_shortcut::Shortcut>() {
-            let _ = app.global_shortcut().unregister(shortcut);
+        match old.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+            Ok(shortcut) => {
+                let _ = app.global_shortcut().unregister(shortcut);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to parse old hotkey '{}' for unregistration: {}", old, e);
+                let _ = app.global_shortcut().unregister_all();
+            }
         }
         // Register new — emit error if conflict (spec §11 GAP-7).
         if let Err(e) = crate::hotkey::register(&app, &value) {
@@ -205,9 +228,10 @@ pub fn list_frameworks(engine: State<'_, OptimizationEngine>) -> Result<Vec<serd
 pub fn import_framework(
     app: AppHandle,
     engine: State<'_, OptimizationEngine>,
-    pack: crate::engine::FrameworkPack,
+    mut pack: crate::engine::FrameworkPack,
 ) -> Result<(), ApiError> {
     use tauri::Manager;
+    pack.id = pack.id.to_uppercase();
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| ApiError::internal(e.to_string()))?;
     let packs_dir = app_data_dir.join("framework_packs");
@@ -231,12 +255,13 @@ pub fn delete_framework(
     id: String,
 ) -> Result<(), ApiError> {
     use tauri::Manager;
-    if crate::engine::is_builtin(&id) {
+    let id_upper = id.to_uppercase();
+    if crate::engine::is_builtin(&id_upper) {
         return Err(ApiError::internal("cannot delete built-in framework"));
     }
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| ApiError::internal(e.to_string()))?;
-    let file = app_data_dir.join("framework_packs").join(format!("{}.json", sanitize_id(&id)));
+    let file = app_data_dir.join("framework_packs").join(format!("{}.json", sanitize_id(&id_upper)));
     if file.exists() {
         std::fs::remove_file(&file).map_err(|e| ApiError::internal(e.to_string()))?;
     }
@@ -280,15 +305,17 @@ pub fn set_provider_enabled(db: State<'_, DbService>, id: String, enabled: bool)
     db.set_provider_enabled(&id, enabled).map_err(|e| ApiError::internal(e.to_string()))
 }
 
-/// Write/overwrite a provider's API key to the OS keychain.
-/// Blank key = clear.
+/// Write/overwrite a provider's API key to the OS keychain + in-memory cache.
+/// Blank key = clear. Never fails (cache guarantees session-local availability).
 #[tauri::command]
 pub fn set_provider_key(id: String, key: String) -> Result<(), ApiError> {
     if key.is_empty() {
-        crate::providers::keys::delete(&id).map_err(|e| ApiError::internal(e.to_string()))
+        let _ = crate::providers::keys::delete(&id);
     } else {
-        crate::providers::keys::set(&id, &key).map_err(|e| ApiError::internal(e.to_string()))
+        crate::providers::keys::set(&id, &key)
+            .map_err(|e| ApiError::internal(e.to_string()))?;
     }
+    Ok(())
 }
 
 // ─── Meta ─────────────────────────────────────────────────────────────────
@@ -338,6 +365,8 @@ pub fn complete_onboarding(
         if let Some(pid) = provider_id {
             db.set_meta("default_provider_id", &pid).map_err(|e| ApiError::internal(e.to_string()))?;
             db.set_setting("default_provider_id", &pid).map_err(|e| ApiError::internal(e.to_string()))?;
+            // Enable the provider the user chose during onboarding.
+            let _ = db.set_provider_enabled(&pid, true);
         }
         if let Some(m) = model {
             db.set_setting("default_model", &m).map_err(|e| ApiError::internal(e.to_string()))?;
@@ -357,6 +386,13 @@ pub fn show_overlay(app: AppHandle, pos: Position) -> Result<(), ApiError> {
 pub fn hide_overlay(app: AppHandle) -> Result<(), ApiError> {
     overlay::hide_overlay(&app);
     Ok(())
+}
+
+/// Pull the text buffered at hotkey time. Returns None if nothing pending.
+/// Solves the emit/show race where the global event fired before React mounted.
+#[tauri::command]
+pub fn take_pending_text(app: AppHandle) -> Option<String> {
+    overlay::take_pending_text(&app)
 }
 
 // ─── Diagnostics ──────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export interface Position { x: number; y: number }
 export interface CaptureResult { text: string; position: Position }
-export interface OptimizeRequest { raw: string; framework: string; model: string; context_id?: string }
+export interface OptimizeRequest { raw: string; framework: string; model: string; context_id?: string; refinement_notes?: string }
 export interface OptimizeResult { optimized: string; score: number; diff: string; tokens: number; session_id: string }
 export interface ReplaceResult { success: boolean; fallback: boolean }
 export interface ModelInfo { id: string; name: string }
@@ -21,7 +21,7 @@ export interface ProviderConfig { id: string; kind: string; label: string; base_
 
 export const cmd = {
   captureText: () => invoke<CaptureResult>("capture_text", {}),
-  optimizePrompt: (req: OptimizeRequest) => invoke<OptimizeResult>("optimize_prompt", { raw: req.raw, framework: req.framework, model: req.model, context_id: req.context_id }),
+  optimizePrompt: (req: OptimizeRequest) => invoke<OptimizeResult>("optimize_prompt", { request: req }),
   acceptReplacement: (text: string) => invoke<ReplaceResult>("accept_replacement", { text }),
   getModels: (provider: string) => invoke<ModelInfo[]>("get_models", { provider }),
   testProvider: (id: string) => invoke<{ alive: boolean; models: ModelInfo[]; error: string | null }>("test_provider", { id }),
@@ -29,8 +29,10 @@ export const cmd = {
   listPrompts: () => invoke<Prompt[]>("list_prompts", {}),
   searchPrompts: (q: string) => invoke<Prompt[]>("search_prompts", { query: q }),
   deletePrompt: (id: string) => invoke<void>("delete_prompt", { id }),
+  bumpUsage: (id: string) => invoke<void>("bump_usage", { id }),
   saveContext: (c: ContextProfile) => invoke<void>("save_context", { profile: c }),
   listContexts: () => invoke<ContextProfile[]>("list_contexts", {}),
+  deleteContext: (id: string) => invoke<void>("delete_context", { id }),
   listHistory: (limit?: number) => invoke<HistoryEntry[]>("list_history", { limit }),
   getSettings: () => invoke<Settings>("get_settings", {}),
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
@@ -39,6 +41,7 @@ export const cmd = {
   deleteFramework: (id: string) => invoke<void>("delete_framework", { id }),
   showOverlay: (pos: Position) => invoke<void>("show_overlay", { pos }),
   hideOverlay: () => invoke<void>("hide_overlay", {}),
+  takePendingText: () => invoke<string | null>("take_pending_text", {}),
   dbStats: () => invoke<Record<string, number>>("db_stats", {}),
   listProviders: () => invoke<ProviderConfig[]>("list_providers", {}),
   getProvider: (id: string) => invoke<ProviderConfig | null>("get_provider", { id }),

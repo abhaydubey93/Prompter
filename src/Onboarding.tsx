@@ -88,7 +88,7 @@ export default function Onboarding({ onClose }: Props) {
       <div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
           <h2 className="text-lg font-semibold text-zinc-100">
-            Welcome to PromptOpt Overlay
+            Welcome to Prompter Overlay
           </h2>
           <button
             onClick={() => finish(true)}

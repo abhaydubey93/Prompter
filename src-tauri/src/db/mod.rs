@@ -106,6 +106,15 @@ impl DbService {
         )?;
         Self::seed_defaults(conn)?;
         Self::seed_providers(conn)?;
+        // Heal existing installs: if user picked a provider in onboarding but
+        // the old code never enabled it (bug: complete_onboarding missing
+        // set_provider_enabled), enable it now.
+        let pid: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'default_provider_id'", [], |r| r.get(0))
+            .ok();
+        if let Some(pid) = pid {
+            let _ = conn.execute("UPDATE providers SET enabled = 1 WHERE id = ?1", params![pid]);
+        }
         Ok(())
     }
 
@@ -300,6 +309,12 @@ impl DbService {
         }
     }
 
+    pub fn delete_context(&self, id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM context_profiles WHERE id=?1", params![id])?;
+        Ok(())
+    }
+
     // ---- history ----------------------------------------------------------
 
     pub fn add_history(
@@ -352,7 +367,7 @@ impl DbService {
 
         let defaults = [
             ("ollama", "ollama", "Ollama (local)", "http://localhost:11434", None, "llama3", true, 0),
-            ("lmstudio", "openai_compat", "LM Studio (local)", "http://localhost:1234", None, "", true, 1),
+            ("lmstudio", "openai_compat", "LM Studio (local)", "http://localhost:1234/v1", None, "", true, 1),
             ("openai", "openai_compat", "OpenAI", "https://api.openai.com/v1", Some("openai"), "gpt-4o", false, 10),
             ("anthropic", "anthropic", "Anthropic", "https://api.anthropic.com", Some("anthropic"), "claude-sonnet-4-20250514", false, 11),
             ("openrouter", "openai_compat", "OpenRouter", "https://openrouter.ai/api/v1", Some("openrouter"), "anthropic/claude-sonnet-4", false, 12),
@@ -574,6 +589,11 @@ mod tests {
         let found = db.get_context("ctx1").unwrap();
         assert!(found.is_some());
         assert!(db.get_context("nope").unwrap().is_none());
+
+        // Delete.
+        db.delete_context("ctx1").unwrap();
+        assert!(db.get_context("ctx1").unwrap().is_none());
+        assert_eq!(db.list_contexts().unwrap().len(), 0);
     }
 
     #[test]

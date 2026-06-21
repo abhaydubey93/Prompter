@@ -5,7 +5,7 @@ import {
   type Prompt, type Settings, type HistoryEntry, type ProviderConfig, type FrameworkInfo, type ContextProfile,
 } from "./lib/tauri";
 import {
-  Settings as SettingsIcon, BookOpen, History, Zap, Trash2, Search, AlertTriangle,
+  Settings as SettingsIcon, BookOpen, History, Zap, Trash2, Search, AlertTriangle, Copy, Loader2,
 } from "lucide-react";
 import Onboarding from "./Onboarding";
 
@@ -20,10 +20,11 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    loadLibrary();
-    loadSettings();
-    checkOnboarding();
+    Promise.all([loadLibrary(), loadSettings(), checkOnboarding()])
+      .finally(() => setLoading(false));
   }, []);
 
   // First-run / no-provider gate: show wizard if not completed or no provider enabled.
@@ -38,15 +39,47 @@ export default function App() {
 
   // Listen for hotkey conflict errors (spec §11 GAP-7).
   useEffect(() => {
-    const setup = async () => {
-      const unlisten = await onHotkeyError((ev) => {
-        setToast(`Hotkey "${ev.shortcut}" conflict: ${ev.message}`);
-        setTimeout(() => setToast(null), 5000);
-      });
-      return () => unlisten();
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    onHotkeyError((ev) => {
+      setToast(`Hotkey "${ev.shortcut}" conflict: ${ev.message}`);
+      setTimeout(() => setToast(null), 5000);
+    }).then((un) => {
+      if (cancelled) {
+        un();
+      } else {
+        unlisten = un;
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
     };
-    setup();
   }, []);
+
+  // Apply theme (WP-F): toggles data-theme attr on <html> for light/dark CSS.
+  useEffect(() => {
+    if (!settings) return;
+
+    const updateTheme = () => {
+      let resolvedTheme = "dark";
+      if (settings.theme === "light") {
+        resolvedTheme = "light";
+      } else if (settings.theme === "system") {
+        resolvedTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolvedTheme);
+    };
+
+    updateTheme();
+
+    if (settings.theme === "system") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handler = () => updateTheme();
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
+    }
+  }, [settings?.theme]);
 
   const loadLibrary = async () => {
     try { setPrompts(await cmd.listPrompts()); } catch { /* ignore */ }
@@ -69,12 +102,33 @@ export default function App() {
     try { await cmd.deletePrompt(id); setPrompts((p) => p.filter((x) => x.id !== id)); } catch { /* ignore */ }
   };
 
+  const handleCopy = async (p: Prompt) => {
+    try {
+      await navigator.clipboard.writeText(p.body);
+      await cmd.bumpUsage(p.id);
+      setToast("Prompt copied to clipboard!");
+      setTimeout(() => setToast(null), 3000);
+      loadLibrary();
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => { if (tab === "history") loadHistory(); }, [tab]);
 
-  const updateSetting = async (key: string, value: string) => {
+  const updateSetting = async (key: keyof Settings, value: string) => {
     await cmd.setSetting(key, value);
     loadSettings();
   };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-bg-900 text-gray-200 select-none">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="animate-spin text-accent" size={32} />
+          <span className="text-xs text-gray-500 font-medium tracking-wide">Loading Prompter...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-bg-900 text-gray-200">
@@ -93,7 +147,7 @@ export default function App() {
       <aside className="w-56 bg-bg-800 border-r border-bg-600 flex flex-col shrink-0">
         <div className="px-4 py-4 flex items-center gap-2 border-b border-bg-600">
           <Zap size={20} className="text-accent" />
-          <h1 className="text-base font-bold tracking-tight">PromptOpt</h1>
+          <h1 className="text-base font-bold tracking-tight">Prompter</h1>
         </div>
         <nav className="flex-1 py-2">
           <SidebarItem icon={<BookOpen size={16} />} label="Prompt Library" active={tab === "library"} onClick={() => setTab("library")} />
@@ -101,7 +155,7 @@ export default function App() {
           <SidebarItem icon={<SettingsIcon size={16} />} label="Settings" active={tab === "settings"} onClick={() => setTab("settings")} />
         </nav>
         <div className="px-4 py-3 text-[10px] text-gray-600 border-t border-bg-600">
-          PromptOpt v0.1.0 MVP
+          Prompter v0.1.0 MVP
         </div>
       </aside>
 
@@ -138,9 +192,14 @@ export default function App() {
                         <span>Used: {p.usage_count}×</span>
                       </div>
                     </div>
-                    <button onClick={() => handleDelete(p.id)} className="p-1 text-gray-500 hover:text-red-400 shrink-0">
-                      <Trash2 size={14} />
-                    </button>
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={() => handleCopy(p)} className="p-1 text-gray-500 hover:text-gray-200" title="Copy prompt and use">
+                        <Copy size={14} />
+                      </button>
+                      <button onClick={() => handleDelete(p.id)} className="p-1 text-gray-500 hover:text-red-400">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -169,6 +228,10 @@ export default function App() {
           <SettingsTabs
             settings={settings}
             onSetting={updateSetting}
+            onToast={(msg) => {
+              setToast(msg);
+              setTimeout(() => setToast(null), 5000);
+            }}
           />
         )}
       </main>
@@ -184,7 +247,7 @@ function SidebarItem({ icon, label, active, onClick }: {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-3 px-4 py-2.5 text-sm transition ${
+      className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition ${
         active ? "bg-bg-600/50 text-white border-l-2 border-accent" : "text-gray-400 hover:bg-bg-700 hover:text-gray-200 border-l-2 border-transparent"
       }`}
     >
@@ -226,9 +289,10 @@ function KbdRow({ keys, action }: { keys: string[]; action: string }) {
 
 type SettingsTab = "general" | "providers" | "frameworks" | "context" | "privacy";
 
-function SettingsTabs({ settings, onSetting }: {
+function SettingsTabs({ settings, onSetting, onToast }: {
   settings: Settings;
   onSetting: (k: keyof Settings, v: string) => void;
+  onToast: (msg: string) => void;
 }) {
   const [stab, setStab] = useState<SettingsTab>("general");
   const tabs: { id: SettingsTab; label: string }[] = [
@@ -260,9 +324,9 @@ function SettingsTabs({ settings, onSetting }: {
         <GeneralTab settings={settings} onSetting={onSetting} />
       )}
       {stab === "providers" && <ProvidersTab />}
-      {stab === "frameworks" && <FrameworksTab defaultFramework={settings.default_framework} onFramework={(v) => onSetting("default_framework", v)} />}
+      {stab === "frameworks" && <FrameworksTab defaultFramework={settings.default_framework} onFramework={(v) => onSetting("default_framework", v)} onToast={onToast} />}
       {stab === "context" && <ContextTab />}
-      {stab === "privacy" && <PrivacyTab />}
+      {stab === "privacy" && <PrivacyTab onToast={onToast} />}
     </div>
   );
 }
@@ -289,6 +353,7 @@ function GeneralTab({ settings, onSetting }: {
         >
           <option value="dark">dark</option>
           <option value="light">light</option>
+          <option value="system">system</option>
         </select>
       </div>
       <div className="flex items-center justify-between py-3 border-b border-bg-700">
@@ -333,6 +398,7 @@ function ProvidersTab() {
   const [apiKey, setApiKey] = useState("");
   const [testing, setTesting] = useState<string | null>(null);
   const [testMsg, setTestMsg] = useState<Record<string, string>>({});
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const load = () => cmd.listProviders().then(setProviders).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -364,7 +430,6 @@ function ProvidersTab() {
     load();
   }
   async function del(id: string) {
-    if (!confirm("Delete this provider?")) return;
     await cmd.deleteProvider(id);
     load();
   }
@@ -382,7 +447,14 @@ function ProvidersTab() {
               <input type="checkbox" checked={p.enabled} onChange={(e) => toggle(p, e.target.checked)} />
               <button onClick={() => test(p)} disabled={testing === p.id} className="text-xs px-2 py-1 bg-bg-700 rounded hover:bg-bg-600">Test</button>
               <button onClick={() => { setEditing({ ...p }); setApiKey(""); }} className="text-xs px-2 py-1 bg-bg-700 rounded hover:bg-bg-600">Edit</button>
-              <button onClick={() => del(p.id)} className="text-xs px-2 py-1 bg-bg-700 rounded hover:bg-red-900">Del</button>
+              {confirmDeleteId === p.id ? (
+                <div className="flex gap-1">
+                  <button onClick={() => { del(p.id); setConfirmDeleteId(null); }} className="text-xs px-2 py-1 bg-red-800 text-white rounded hover:bg-red-700 font-bold">confirm</button>
+                  <button onClick={() => setConfirmDeleteId(null)} className="text-xs px-2 py-1 bg-bg-600 rounded">cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmDeleteId(p.id)} className="text-xs px-2 py-1 bg-bg-700 rounded hover:bg-red-900">Del</button>
+              )}
             </div>
           </div>
           {testMsg[p.id] && <div className="text-xs mt-1 text-gray-400">{testMsg[p.id]}</div>}
@@ -413,9 +485,10 @@ function ProvidersTab() {
   );
 }
 
-function FrameworksTab({ defaultFramework, onFramework }: {
+function FrameworksTab({ defaultFramework, onFramework, onToast }: {
   defaultFramework: string;
   onFramework: (v: string) => void;
+  onToast: (msg: string) => void;
 }) {
   const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([]);
   const load = () => cmd.listFrameworks().then(setFrameworks).catch(() => {});
@@ -433,8 +506,9 @@ function FrameworksTab({ defaultFramework, onFramework }: {
         const pack = JSON.parse(text);
         await cmd.importFramework({ ...pack, template: pack.template ?? "{{ raw_prompt }}" });
         load();
+        onToast("Framework imported successfully.");
       } catch (e) {
-        alert(`Import failed: ${e}`);
+        onToast(`Import failed: ${e}`);
       }
     };
     input.click();
@@ -443,8 +517,9 @@ function FrameworksTab({ defaultFramework, onFramework }: {
     try {
       await cmd.deleteFramework(id);
       load();
+      onToast("Framework deleted.");
     } catch (e) {
-      alert(`Cannot delete (likely built-in): ${e}`);
+      onToast(`Cannot delete (likely built-in): ${e}`);
     }
   }
 
@@ -478,6 +553,7 @@ function FrameworksTab({ defaultFramework, onFramework }: {
 function ContextTab() {
   const [profiles, setProfiles] = useState<ContextProfile[]>([]);
   const [draft, setDraft] = useState<ContextProfile | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const load = () => cmd.listContexts().then(setProfiles).catch(() => {});
   useEffect(() => { load(); }, []);
 
@@ -487,6 +563,12 @@ function ContextTab() {
     setDraft(null);
     load();
   }
+
+  async function remove(id: string) {
+    await cmd.deleteContext(id);
+    load();
+  }
+
   return (
     <div>
       <div className="space-y-2">
@@ -496,7 +578,17 @@ function ContextTab() {
               <div className="text-sm text-gray-200">{c.name}</div>
               <div className="text-xs text-gray-500">{[c.role, c.audience, c.tone].filter(Boolean).join(" · ")}</div>
             </div>
-            <button onClick={() => setDraft({ ...c })} className="text-xs text-gray-500 hover:text-gray-300">edit</button>
+            <div className="flex gap-2">
+              <button onClick={() => setDraft({ ...c })} className="text-xs text-gray-500 hover:text-gray-300">edit</button>
+              {confirmDeleteId === c.id ? (
+                <>
+                  <button onClick={() => { remove(c.id); setConfirmDeleteId(null); }} className="text-xs text-red-400 hover:text-red-300 font-bold">confirm</button>
+                  <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-gray-500 hover:text-gray-300">cancel</button>
+                </>
+              ) : (
+                <button onClick={() => setConfirmDeleteId(c.id)} className="text-xs text-gray-500 hover:text-red-400">delete</button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -517,8 +609,9 @@ function ContextTab() {
   );
 }
 
-function PrivacyTab() {
+function PrivacyTab({ onToast }: { onToast: (msg: string) => void }) {
   const [telemetry, setTelemetry] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => {
     cmd.getMeta("telemetry_enabled").then((v) => setTelemetry(v === "1")).catch(() => {});
   }, []);
@@ -527,9 +620,12 @@ function PrivacyTab() {
     await cmd.setMeta("telemetry_enabled", on ? "1" : "0");
   }
   async function clearHist() {
-    if (!confirm("Clear all optimization history? This cannot be undone.")) return;
-    await cmd.clearHistory();
-    alert("History cleared.");
+    try {
+      await cmd.clearHistory();
+      onToast("History cleared.");
+    } catch (e) {
+      onToast(`Failed to clear history: ${e}`);
+    }
   }
   return (
     <div>
@@ -541,7 +637,15 @@ function PrivacyTab() {
         <input type="checkbox" checked={telemetry} onChange={(e) => toggleTelemetry(e.target.checked)} />
       </div>
       <div className="py-3 border-b border-bg-700">
-        <button onClick={clearHist} className="text-xs px-3 py-1.5 bg-red-900/50 text-red-200 rounded hover:bg-red-900">Clear optimization history</button>
+        {confirmClear ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-red-400 font-medium">Are you sure you want to clear all history?</span>
+            <button onClick={() => { clearHist(); setConfirmClear(false); }} className="text-xs px-3 py-1 bg-red-800 text-white rounded hover:bg-red-700 font-bold">Clear</button>
+            <button onClick={() => setConfirmClear(false)} className="text-xs px-3 py-1 bg-bg-600 rounded">Cancel</button>
+          </div>
+        ) : (
+          <button onClick={() => setConfirmClear(true)} className="text-xs px-3 py-1.5 bg-red-900/50 text-red-200 rounded hover:bg-red-900">Clear optimization history</button>
+        )}
       </div>
       <div className="mt-4 text-xs text-gray-500">
         API keys are stored only in the OS keychain — never in the database or logs.

@@ -160,13 +160,14 @@ pub struct OptimizeRequest {
     pub framework: String,
     pub model: String,
     pub context_id: Option<String>,
+    pub refinement_notes: Option<String>,
 }
 
 /// Final result emitted on `opt_done`.
 #[derive(Debug, Clone, Serialize)]
 pub struct OptimizeResult {
     pub optimized: String,
-    pub score: u32,
+    pub score: i64,
     pub diff: String,
     pub tokens: usize,
     pub session_id: String,
