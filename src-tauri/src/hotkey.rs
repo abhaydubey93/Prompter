@@ -66,20 +66,25 @@ fn capture_via_clipboard(app: &AppHandle) -> anyhow::Result<String> {
     // Clear clipboard to detect if Ctrl+C copied anything.
     let _ = app.clipboard().write_text("".to_string());
 
-    // Send synthetic Ctrl+C
-    #[cfg(windows)]
+    // Send synthetic Ctrl+C on Windows or Cmd+C on macOS
+    #[cfg(any(windows, target_os = "macos"))]
     {
         use enigo::{Direction, Enigo, Key, Keyboard, Settings};
         if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
-            // Release Shift/Alt/Meta in case user is holding them for the hotkey (e.g. Ctrl+Shift+E)
+            // Release Shift/Alt/Meta/Control in case user is holding them for the hotkey (e.g. Ctrl+Shift+E)
             let _ = enigo.key(Key::Shift, Direction::Release);
             let _ = enigo.key(Key::Alt, Direction::Release);
             let _ = enigo.key(Key::Meta, Direction::Release);
             let _ = enigo.key(Key::Control, Direction::Release);
 
-            let _ = enigo.key(Key::Control, Direction::Press);
+            #[cfg(windows)]
+            let modifier = Key::Control;
+            #[cfg(target_os = "macos")]
+            let modifier = Key::Meta;
+
+            let _ = enigo.key(modifier, Direction::Press);
             let _ = enigo.key(Key::Unicode('c'), Direction::Click);
-            let _ = enigo.key(Key::Control, Direction::Release);
+            let _ = enigo.key(modifier, Direction::Release);
         }
     }
 

@@ -39,10 +39,10 @@ aes-gcm = "0.10.3"
 rand = "0.10.1"
 sha2 = "0.11.0"
 machine-uid = "0.6.0"
+enigo = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 uiautomation = "0.16"
-enigo = "0.6"
 
 [features]
 default = []
