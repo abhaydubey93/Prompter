@@ -19,7 +19,7 @@
 
 ## Overview
 
-Prompter is a desktop overlay application that streamlines prompt engineering. It runs in the background and activates via a global hotkey (`Ctrl+Shift+E`). When triggered, it captures the text from any focused input field, streams an optimized version from your LLM of choice, and replaces the original text in place — no copy-paste, no context switch.
+Prompter is a desktop overlay application that streamlines prompt engineering. It runs in the background and activates via a global hotkey (`Ctrl+Shift+E`). When triggered, it captures the text from the focused element, applies a selected prompt framework to optimize it, streams the results from an LLM, scores the output, and replaces the original text in place.
 
 ```
 First launch → Onboarding wizard (pick provider + model)
@@ -40,10 +40,19 @@ Workflow     → Ctrl+Shift+E → capture → stream optimize → Accept → rep
 
 ---
 
+## ⚠️ Disclaimer
+
+**Developed with AI Assistance** — This application was developed using artificial intelligence tools to accelerate development and iteration.
+
+**Platform Support** — Prompter is currently **Windows-only** (Windows 10/11, x64). Support for macOS and Linux is planned for upcoming releases. The codebase includes architecture traits for platform abstraction, enabling future cross-platform expansion.
+
+---
+
 ## Table of Contents
 
 - [Overview](#overview)
   - [Key Features](#key-features)
+- [Disclaimer](#-disclaimer)
 - [Table of Contents](#table-of-contents)
 - [Supported Providers](#supported-providers)
 - [Prompt Frameworks](#prompt-frameworks)
@@ -253,7 +262,7 @@ PromptForge/
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────[...]
 │                         React UI (WebView)                       │
 │                                                                  │
 │  ┌──────────────┐  ┌──────────────────────────────────────────┐  │
@@ -267,9 +276,9 @@ PromptForge/
 │  │  History     │                                                │
 │  │  Settings(5) │                                                │
 │  └──────────────┘                                                │
-└─────────────┬──────────────────────────────────┬─────────────────┘
+└─────────────┬──────────────────────────────────┬───────────────[...]
               │  Tauri IPC (invoke / events)     │
-┌─────────────▼──────────────────────────────────▼─────────────────┐
+┌─────────────▼──────────────────────────────────▼───────────────[...]
 │                         Rust Core                                │
 │                                                                  │
 │  commands.rs ──► OptimizationEngine ──► LLMAdapter               │
@@ -280,7 +289,7 @@ PromptForge/
 │  hotkey.rs      ──► overlay.rs (monitor-aware positioning)       │
 │  DbService      ◄──► SQLite (data.db, 7 tables)                  │
 │  keys.rs        ◄──► OS Keychain (keyring)                       │
-└──────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────[...]
 ```
 
 ### Database Schema (SQLite)
